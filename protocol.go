@@ -32,7 +32,7 @@ func DetectProtocol() Protocol {
 func checkITerm2Support() bool {
 	// iTerm2 doesn't have a specific query mechanism, so we'll use a heuristic to check the env
 	switch {
-	case os.Getenv("LC_TERMINAL") == "iterm2":
+	case os.Getenv("LC_TERMINAL") == "iTerm2" || os.Getenv("TERM_PROGRAM") == "iTerm.app":
 		return true
 	case os.Getenv("TERM_PROGRAM") == "wezterm":
 		return true
