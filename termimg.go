@@ -20,6 +20,7 @@ type TermImg struct {
 	protocol Protocol
 	img      *image.Image
 	format   string
+	pngBytes []byte
 	closer   io.Closer
 }
 
@@ -95,7 +96,7 @@ func (ti *TermImg) Render() (string, error) {
 	}
 }
 
-func (ti *TermImg) asPNGBytes() ([]byte, error) {
+func (ti *TermImg) AsPNGBytes() ([]byte, error) {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, *ti.img); err != nil {
 		return nil, err
@@ -104,19 +105,25 @@ func (ti *TermImg) asPNGBytes() ([]byte, error) {
 }
 
 func (ti *TermImg) renderITerm2() (string, error) {
-	data, err := ti.asPNGBytes()
-	if err != nil {
-		return "", err
+	if ti.pngBytes == nil {
+		data, err := ti.AsPNGBytes()
+		if err != nil {
+			return "", err
+		}
+		ti.pngBytes = data
 	}
 	// Print iTerm2 escape sequence
-	return fmt.Sprintf("\x1b]1337;File=inline=1;preserveAspectRatio=1;size=%d;width=%dpx;height=%dpx:%s\a\n", len(data), (*ti.img).Bounds().Dx(), (*ti.img).Bounds().Dy(), base64.StdEncoding.EncodeToString(data)), nil
+	return fmt.Sprintf("\x1b]1337;File=inline=1;preserveAspectRatio=1;size=%d;width=%dpx;height=%dpx:%s\a\n", len(ti.pngBytes), (*ti.img).Bounds().Dx(), (*ti.img).Bounds().Dy(), base64.StdEncoding.EncodeToString(ti.pngBytes)), nil
 }
 
 func (ti *TermImg) renderKitty() (string, error) {
-	data, err := ti.asPNGBytes()
-	if err != nil {
-		return "", err
+	if ti.pngBytes == nil {
+		data, err := ti.AsPNGBytes()
+		if err != nil {
+			return "", err
+		}
+		ti.pngBytes = data
 	}
 	// Print Kitty escape sequence
-	return fmt.Sprintf("\033_Ga=T,f=100;%s\033\\", base64.StdEncoding.EncodeToString(data)), nil
+	return fmt.Sprintf("\033_Ga=T,f=100;%s\033\\", base64.StdEncoding.EncodeToString(ti.pngBytes)), nil
 }
