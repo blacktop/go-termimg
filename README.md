@@ -24,6 +24,20 @@ if err != nil {
 fmt.Println(imgstr)
 ```
 
+### `imgcat` demo tool
+
+Install
+
+```
+go install github.com/blacktop/go-termimg/cmd/imgcat@latest
+```
+
+Usage
+
+```
+imgcat path/to/your/image.png
+```
+
 ## License
 
 MIT Copyright (c) 2024 **blacktop**
