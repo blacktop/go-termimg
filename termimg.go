@@ -51,7 +51,7 @@ func Open(imagePath string) (*TermImg, error) {
 }
 
 func (t *TermImg) Info() string {
-	return fmt.Sprintf("Protocol: %s, Format: %s, Size: %dx%d", t.protocol, t.format, (*t.img).Bounds().Dx(), (*t.img).Bounds().Dy())
+	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, (*t.img).Bounds().Dx(), (*t.img).Bounds().Dy())
 }
 
 func (t *TermImg) Close() error {
@@ -109,7 +109,7 @@ func (ti *TermImg) renderITerm2() (string, error) {
 		return "", err
 	}
 	// Print iTerm2 escape sequence
-	return fmt.Sprintf("\033]1337;File=inline=1:%s\a\n", base64.StdEncoding.EncodeToString(data)), nil
+	return fmt.Sprintf("\x1b]1337;File=inline=1;preserveAspectRatio=1;size=%d;width=%d;height=%d:%s\a\n", len(data), (*ti.img).Bounds().Dx(), (*ti.img).Bounds().Dy(), base64.StdEncoding.EncodeToString(data)), nil
 }
 
 func (ti *TermImg) renderKitty() (string, error) {
