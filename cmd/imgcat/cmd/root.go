@@ -47,6 +47,8 @@ var rootCmd = &cobra.Command{
 		}
 		defer timg.Close()
 
+		log.Infof("Image Info: %s", timg.Info())
+
 		out, err := timg.Render()
 		if err != nil {
 			log.Fatalf("Failed to display image: %v", err)
