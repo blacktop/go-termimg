@@ -4,6 +4,26 @@
 
 > Go terminal image package
 
+## Getting Started
+
+```
+go get github.com/blacktop/go-termimg
+```
+
+## Usage
+
+```go
+ti, err := termimg.Open("path/to/your/image.png")
+if err != nil {
+    log.Fatal(err)
+}
+imgstr, err := ti.Render()
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(imgstr)
+```
+
 ## License
 
 MIT Copyright (c) 2024 **blacktop**

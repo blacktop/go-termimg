@@ -17,10 +17,15 @@ Usage:
 
 To use this package, simply call the RenderImage function with the path to your image:
 
-	err := termimg.RenderImage("path/to/your/image.png")
+	ti, err := termimg.Open("path/to/your/image.png")
 	if err != nil {
 	    log.Fatal(err)
 	}
+	imgstr, err := ti.Render()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(imgstr)
 
 The package will automatically detect the supported protocol and render the image
 using the appropriate method.
