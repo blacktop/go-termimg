@@ -109,7 +109,7 @@ func (ti *TermImg) renderITerm2() (string, error) {
 		return "", err
 	}
 	// Print iTerm2 escape sequence
-	return fmt.Sprintf("\x1b]1337;File=inline=1;size=%d;width=%dpx;height=%dpx:%s\a\n", len(data), (*ti.img).Bounds().Dx(), (*ti.img).Bounds().Dy(), base64.StdEncoding.EncodeToString(data)), nil
+	return fmt.Sprintf("\x1b]1337;File=inline=1;preserveAspectRatio=1;size=%d;width=%dpx;height=%dpx:%s\a\n", len(data), (*ti.img).Bounds().Dx(), (*ti.img).Bounds().Dy(), base64.StdEncoding.EncodeToString(data)), nil
 }
 
 func (ti *TermImg) renderKitty() (string, error) {
