@@ -45,7 +45,20 @@ func checkITerm2Support() bool {
 	}
 }
 
+func dumbKittySupport() bool {
+	switch {
+	case os.Getenv("KITTY_WINDOW_ID") != "":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "ghostty":
+		return true
+	default:
+		return false
+	}
+}
+
+// Send a query action followed by a request for primary device attributes
 func checkKittySupport() bool {
+	return dumbKittySupport()
 	// Send a query action followed by a request for primary device attributes
 	fmt.Printf("\x1b_Gi=31,s=1,v=1,a=q,t=t;%s\x1b\\", "AAAA")
 
