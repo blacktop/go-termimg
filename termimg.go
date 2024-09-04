@@ -58,12 +58,25 @@ func (t *TermImg) Close() error {
 }
 
 func NewTermImg(r io.Reader) (*TermImg, error) {
+	protocol := DetectProtocol()
+	if protocol == Unsupported {
+		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %#v", []Protocol{ITerm2, Kitty})
+	}
+
 	img, format, err := image.Decode(r)
 	if err != nil {
 		return nil, err
 	}
 
-	return &TermImg{img: &img, format: format}, nil
+	switch format {
+	case "png":
+	case "jpeg":
+	case "webp":
+	default:
+		return nil, fmt.Errorf("unsupported image format: %s; supported formats: (%s)", format, strings.Join(supportedFormats, ", "))
+	}
+
+	return &TermImg{protocol: protocol, img: &img, format: format}, nil
 }
 
 func (ti *TermImg) Render() (string, error) {
