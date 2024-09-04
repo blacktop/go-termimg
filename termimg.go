@@ -50,6 +50,10 @@ func Open(imagePath string) (*TermImg, error) {
 	return &TermImg{protocol: protocol, img: &img, format: format, closer: f}, nil
 }
 
+func (t *TermImg) Info() string {
+	return fmt.Sprintf("Protocol: %s, Format: %s, Size: %dx%d", t.protocol, t.format, (*t.img).Bounds().Dx(), (*t.img).Bounds().Dy())
+}
+
 func (t *TermImg) Close() error {
 	if t.closer == nil {
 		return nil
