@@ -4,6 +4,19 @@
 
 > Go terminal image package
 
+## Supported
+
+### Protocols
+
+- [x] **iTerm2** [Inline Images Protocol](https://iterm2.com/documentation-images.html)
+- [x] **Kitty** [Terminal Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+
+### Image Formats
+
+- [x] PNG
+- [x] JPEG
+- [ ] WEBP
+
 ## Getting Started
 
 ```
