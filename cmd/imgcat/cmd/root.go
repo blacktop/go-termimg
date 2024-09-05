@@ -22,7 +22,6 @@ THE SOFTWARE.
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"time"
 
@@ -60,20 +59,15 @@ var rootCmd = &cobra.Command{
 
 		log.Debugf("Image Info: %s", timg.Info())
 
-		out, err := timg.Render()
-		if err != nil {
+		if err := timg.Print(); err != nil {
 			log.Fatalf("Failed to display image: %v", err)
 		}
-		fmt.Println(out)
 
 		if clear { // Clear the image after displaying it
 			time.Sleep(1 * time.Second)
-
-			out, err = timg.Clear()
-			if err != nil {
+			if err := timg.Clear(); err != nil {
 				log.Fatalf("Failed to clear image: %v", err)
 			}
-			fmt.Println(out)
 		}
 	},
 }

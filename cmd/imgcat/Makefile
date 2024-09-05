@@ -1,7 +1,7 @@
 .PHONY: debug
 debug: ## Debug in another terminal
 	@echo " > Debugging"
-	@dlv debug --headless --listen=:2345 --api-version=2 main.go -- -V --clear ../../test/image.png 
+	@dlv debug --headless --listen=:2345 --api-version=2 main.go -- -V --clear ../../test/image.png
 
 .PHONY: work
 work: clean ## Work on go-termimg package
@@ -12,5 +12,5 @@ work: clean ## Work on go-termimg package
 .PHONY: clean
 clean: ## Clean up
 	@echo " > 🧼 Cleaning up"
-	@rm go.work || true		
+	@rm go.work || true
 	@rm go.work.sum || true

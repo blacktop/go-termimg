@@ -1,14 +1,10 @@
 package termimg
 
-//go:generate stringer -type=Protocol
-
 import (
 	"fmt"
+	"log"
 	"os"
-	"strings"
-	"time"
-
-	"golang.org/x/term"
+	"os/exec"
 )
 
 type Protocol int
@@ -18,6 +14,21 @@ const (
 	ITerm2
 	Kitty
 )
+
+func (p Protocol) String() string {
+	switch p {
+	case ITerm2:
+		return "iTerm2"
+	case Kitty:
+		return "Kitty"
+	default:
+		return "unsupported"
+	}
+}
+
+func (p Protocol) Supported() string {
+	return fmt.Sprintf("%s, %s", ITerm2, Kitty)
+}
 
 func DetectProtocol() Protocol {
 	if checkKittySupport() {
@@ -32,13 +43,11 @@ func DetectProtocol() Protocol {
 func checkITerm2Support() bool {
 	// iTerm2 doesn't have a specific query mechanism, so we'll use a heuristic to check the env
 	switch {
-	case os.Getenv("LC_TERMINAL") == "iTerm2" || os.Getenv("TERM_PROGRAM") == "iTerm.app":
+	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
 		return true
 	case os.Getenv("TERM_PROGRAM") == "vscode":
 		return true
 	case os.Getenv("TERM") == "mintty":
-		return true
-	case os.Getenv("TERM_PROGRAM") == "tmux":
 		return true
 	default:
 		return false
@@ -51,34 +60,16 @@ func dumbKittySupport() bool {
 		return true
 	case os.Getenv("TERM_PROGRAM") == "ghostty":
 		return true
-	// case strings.Contains(os.Getenv("TERMINFO"), "Ghostty"): // tmux
-	// 	return true
+	case os.Getenv("TERM_PROGRAM") == "WezTerm":
+		return true
 	default:
 		return false
 	}
 }
 
-// Send a query action followed by a request for primary device attributes
-func checkKittySupport() bool {
-	// Read response
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return false
+func tmuxPassthrough() {
+	cmd := exec.Command("tmux", "set", "-p", "allow-passthrough", "on")
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("Failed to run tmux command: %v", err)
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	// Send a query action followed by a request for primary device attributes
-	fmt.Print("\x1b_Gi=31,s=1,v=1,a=q,t=t;AAAA\x1b\\")
-
-	response := make([]byte, 100)
-	os.Stdin.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	n, err := os.Stdin.Read(response)
-	if err != nil {
-		return false
-	}
-
-	if n > 0 && strings.Contains(string(response[:n]), "\033_Gi=31;") {
-		return true
-	}
-	return false
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	_ "image/gif"
+	"image/jpeg"
 	_ "image/jpeg"
 	"image/png"
 	_ "image/png"
@@ -16,17 +17,20 @@ import (
 var supportedFormats = []string{"png", "jpeg", "webp"}
 
 type TermImg struct {
-	protocol Protocol
-	img      *image.Image
-	format   string
-	pngBytes []byte
-	closer   io.Closer
+	protocol  Protocol
+	img       *image.Image
+	format    string
+	size      int
+	width     int
+	height    int
+	b64String string
+	closer    io.Closer
 }
 
 func Open(imagePath string) (*TermImg, error) {
 	protocol := DetectProtocol()
 	if protocol == Unsupported {
-		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %#v", []Protocol{ITerm2, Kitty})
+		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", protocol.Supported())
 	}
 
 	f, err := os.Open(imagePath)
@@ -55,11 +59,6 @@ func (t *TermImg) Info() string {
 }
 
 func (t *TermImg) Close() error {
-	if t.protocol == Kitty {
-		if err := checkKittyResponse(); err != nil {
-			return err
-		}
-	}
 	if t.closer == nil {
 		return nil
 	}
@@ -100,20 +99,40 @@ func (ti *TermImg) Render() (string, error) {
 	}
 }
 
-func (ti *TermImg) Clear() (string, error) {
+func (ti *TermImg) Print() error {
+	// Render the image based on the detected protocol
+	switch ti.protocol {
+	case ITerm2:
+		return ti.printITerm2()
+	case Kitty:
+		return ti.printKitty()
+	default:
+		return fmt.Errorf("unsupported protocol")
+	}
+}
+
+func (ti *TermImg) Clear() error {
 	switch ti.protocol {
 	case ITerm2:
 		return ti.clearITerm2()
 	case Kitty:
 		return ti.clearKitty()
 	default:
-		return "", fmt.Errorf("unsupported protocol")
+		return fmt.Errorf("unsupported protocol")
 	}
 }
 
 func (ti *TermImg) AsPNGBytes() ([]byte, error) {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, *ti.img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (ti *TermImg) AsJPEGBytes() ([]byte, error) {
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, *ti.img, nil); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
