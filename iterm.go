@@ -3,7 +3,6 @@ package termimg
 import (
 	"encoding/base64"
 	"fmt"
-	"os"
 )
 
 func (ti *TermImg) renderITerm2() (string, error) {
@@ -19,28 +18,14 @@ func (ti *TermImg) renderITerm2() (string, error) {
 	}
 
 	// Build iTerm2 escape sequence
-	var out string
-	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		tmuxPassthrough()
-		out = "\x1bPtmux;\x1b\x1b"
-	} else {
-		out = "\x1b"
-	}
-
-	out += fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx:%s\x07",
+	out := fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx:%s\x07",
 		ti.size,
 		ti.width,
 		ti.height,
 		ti.b64String,
 	)
 
-	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		out += "\x1b\\"
-	} else {
-		out += ""
-	}
-
-	return out, nil
+	return START + out + ESCAPE + CLOSE, nil
 }
 
 func (ti *TermImg) printITerm2() error {

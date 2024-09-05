@@ -15,6 +15,24 @@ import (
 )
 
 var supportedFormats = []string{"png", "jpeg", "webp"}
+var (
+	ESCAPE = ""
+	START  = ""
+	CLOSE  = ""
+)
+
+func init() {
+	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
+		tmuxPassthrough()
+		ESCAPE = "\x1b\x1b\\"
+		START = "\x1bPtmux;\x1b\x1b"
+		CLOSE = "\x1b\\"
+	} else {
+		ESCAPE = "\x1b\\"
+		START = "\x1b"
+		CLOSE = ""
+	}
+}
 
 type TermImg struct {
 	protocol  Protocol

@@ -1,7 +1,6 @@
 package termimg
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/base64"
 	"fmt"
@@ -11,26 +10,17 @@ import (
 	"golang.org/x/term"
 )
 
-var (
-	ESCAPE = ""
-	START  = ""
-	CLOSE  = ""
+const (
+	TRANSFER_DIRECT = ",t=d"
+	TRANSFER_FILE   = ",t=f"
+	TRANSFER_TEMP   = ",t=t"
+	TRANSFER_SHARED = ",t=s"
+
+	SUPPRESS_OK  = ",q=1"
+	SUPPRESS_ERR = ",q=2"
 )
 
 var ErrEmptyResponse = fmt.Errorf("empty response")
-
-func init() {
-	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		tmuxPassthrough()
-		ESCAPE = "\x1b\x1b"
-		START = "\x1bPtmux;\x1b\x1b"
-		CLOSE = "\x1b\\"
-	} else {
-		ESCAPE = "\x1b"
-		START = "\x1b"
-		CLOSE = ""
-	}
-}
 
 type KittyResponse struct {
 	ID      string
@@ -42,7 +32,7 @@ func parseResponse(in []byte) (*KittyResponse, error) {
 		return nil, ErrEmptyResponse
 	}
 	var resp KittyResponse
-	in = bytes.TrimSpace(in)
+	in = bytes.Trim(in, "\x00")
 	in = bytes.TrimSuffix(in, []byte("\x1b\\"))
 	in = bytes.TrimPrefix(in, []byte("\x1b_G"))
 	fields := bytes.Split(in, []byte(";"))
@@ -63,29 +53,31 @@ func parseResponse(in []byte) (*KittyResponse, error) {
 }
 
 func readStdin() []byte {
-	scanner := bufio.NewScanner(os.Stdin)
+	buf := make([]byte, 100)
 	done := make(chan bool)
 
-	go func() {
-		scanner.Scan()
+	time.AfterFunc(1*time.Second, func() {
 		done <- true
+	})
+
+	go func() {
+		_, _ = os.Stdin.Read(buf)
+		done <- false
 	}()
 
-	select {
-	case <-done:
-		return scanner.Bytes()
-	case <-time.After(100 * time.Millisecond):
-		return nil
+	if <-done {
+		return nil // timeout
+	} else {
+		return buf
 	}
 }
 
 // Send a query action followed by a request for primary device attributes
 func checkKittySupport() bool {
-	if dumbKittySupport() {
-		return true
-	}
+	// if dumbKittySupport() {
+	// 	return true
+	// }
 
-	// Read response
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		return false
@@ -95,8 +87,9 @@ func checkKittySupport() bool {
 	id := "31"
 
 	// Send a query action followed by a request for primary device attributes
-	fmt.Printf(START + fmt.Sprintf("_Gi=%s,s=1,v=1,a=q,t=t;AAAA", id) + ESCAPE + CLOSE)
+	fmt.Printf(START + fmt.Sprintf("_Gi=%s,s=1,v=1,a=q,t=d,f=24;AAAA", id) + ESCAPE + CLOSE)
 
+	// Read response
 	if resp, err := parseResponse(readStdin()); err != nil {
 		return false
 	} else {
@@ -116,7 +109,8 @@ func (ti *TermImg) renderKitty() (string, error) {
 		ti.b64String = base64.StdEncoding.EncodeToString(data)
 	}
 	// Print Kitty escape sequence
-	return START + fmt.Sprintf("_Ga=T,f=100;%s", ti.b64String) + ESCAPE + CLOSE, nil
+	return START + fmt.Sprintf("_Ga=T,f=100%s%s%s;%s", TRANSFER_DIRECT, SUPPRESS_OK, SUPPRESS_ERR, ti.b64String) + ESCAPE + CLOSE, nil
+	// return "\x1b" + fmt.Sprintf("_Ga=T,f=100;%s", ti.b64String) + "\x1b\\", nil
 }
 
 func (ti *TermImg) printKitty() error {
@@ -124,46 +118,11 @@ func (ti *TermImg) printKitty() error {
 	if err != nil {
 		return err
 	}
-
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return fmt.Errorf("failed to get terminal state: %v", err)
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
 	fmt.Println(out)
-
-	if resp, err := parseResponse(readStdin()); err != nil {
-		if err == ErrEmptyResponse {
-			return nil
-		}
-		return fmt.Errorf("failed to parse Kitty response: %v", err)
-	} else {
-		if resp.Message == "OK" {
-			return nil
-		}
-		return fmt.Errorf("failed to display image: %s", resp.Message)
-	}
+	return nil
 }
 
 func (ti *TermImg) clearKitty() error {
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return fmt.Errorf("failed to get terminal state: %v", err)
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	fmt.Println(START + "_Ga=d" + ESCAPE + CLOSE) // delete all visible images
-
-	if resp, err := parseResponse(readStdin()); err != nil {
-		if err == ErrEmptyResponse {
-			return nil
-		}
-		return fmt.Errorf("failed to parse Kitty response: %v", err)
-	} else {
-		if resp.Message == "OK" {
-			return nil
-		}
-		return fmt.Errorf("failed to display image: %s", resp.Message)
-	}
+	fmt.Println(START + fmt.Sprintf("_Ga=d%s%s", SUPPRESS_OK, SUPPRESS_ERR) + ESCAPE + CLOSE) // delete all visible images
+	return nil
 }

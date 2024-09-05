@@ -31,13 +31,13 @@ func (p Protocol) Supported() string {
 }
 
 func DetectProtocol() Protocol {
-	if checkKittySupport() {
-		return Kitty
-	}
 	if checkITerm2Support() {
 		return ITerm2
+	} else if checkKittySupport() {
+		return Kitty
+	} else {
+		return Unsupported
 	}
-	return Unsupported
 }
 
 func checkITerm2Support() bool {
