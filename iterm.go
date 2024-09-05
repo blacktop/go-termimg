@@ -18,7 +18,7 @@ func (ti *TermImg) renderITerm2() (string, error) {
 	}
 
 	// Build iTerm2 escape sequence
-	out := fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx:%s\x07",
+	out := fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx;doNotMoveCursor=1:%s\x07",
 		ti.size,
 		ti.width,
 		ti.height,
