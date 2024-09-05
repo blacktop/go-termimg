@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+const ESC_ERASE_DISPLAY = "\x1b[2J\x1b[0;0H"
+
 var supportedFormats = []string{"png", "jpeg", "webp"}
 var (
 	ESCAPE = ""

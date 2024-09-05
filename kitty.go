@@ -11,6 +11,12 @@ import (
 )
 
 const (
+	DATA_RGBA_32_BIT = ",f=32" // default
+	DATA_RGBA_24_BIT = ",f=24"
+	DATA_PNG         = ",f=100"
+
+	COMPRESS_ZLIB = ",0=z"
+
 	TRANSFER_DIRECT = ",t=d"
 	TRANSFER_FILE   = ",t=f"
 	TRANSFER_TEMP   = ",t=t"
@@ -97,6 +103,7 @@ func checkKittySupport() bool {
 	}
 }
 
+// TODO: chunk this up with the `m=1` command
 func (ti *TermImg) renderKitty() (string, error) {
 	if ti.b64String == "" {
 		data, err := ti.AsPNGBytes()
@@ -109,7 +116,15 @@ func (ti *TermImg) renderKitty() (string, error) {
 		ti.b64String = base64.StdEncoding.EncodeToString(data)
 	}
 	// Print Kitty escape sequence
-	return START + fmt.Sprintf("_Ga=T,f=100%s%s%s;%s", TRANSFER_DIRECT, SUPPRESS_OK, SUPPRESS_ERR, ti.b64String) + ESCAPE + CLOSE, nil
+	return START + fmt.Sprintf(
+		"_Ga=T,f=100,s=%d,v=%d%s%s%s;%s",
+		ti.width,
+		ti.height,
+		TRANSFER_DIRECT,
+		SUPPRESS_OK,
+		SUPPRESS_ERR,
+		ti.b64String,
+	) + ESCAPE + CLOSE, nil
 	// return "\x1b" + fmt.Sprintf("_Ga=T,f=100;%s", ti.b64String) + "\x1b\\", nil
 }
 
