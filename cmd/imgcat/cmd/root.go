@@ -24,6 +24,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/apex/log"
 	clihander "github.com/apex/log/handlers/cli"
@@ -31,8 +32,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var verbose bool
+var clear bool
+
 func init() {
 	log.SetHandler(clihander.Default)
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "V", false, "Enable verbose logging")
+	rootCmd.PersistentFlags().BoolVarP(&clear, "clear", "c", false, "Clear the image after displaying it")
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -41,19 +47,34 @@ var rootCmd = &cobra.Command{
 	Short: "Display images in your terminal. ",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+
+		if verbose {
+			log.SetLevel(log.DebugLevel)
+		}
+
 		timg, err := termimg.Open(args[0])
 		if err != nil {
 			log.Fatalf("Failed to open image: %v", err)
 		}
 		defer timg.Close()
 
-		log.Infof("Image Info: %s", timg.Info())
+		log.Debugf("Image Info: %s", timg.Info())
 
 		out, err := timg.Render()
 		if err != nil {
 			log.Fatalf("Failed to display image: %v", err)
 		}
 		fmt.Println(out)
+
+		if clear { // Clear the image after displaying it
+			time.Sleep(1 * time.Second)
+
+			out, err = timg.Clear()
+			if err != nil {
+				log.Fatalf("Failed to clear image: %v", err)
+			}
+			fmt.Println(out)
+		}
 	},
 }
 

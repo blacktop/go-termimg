@@ -20,11 +20,11 @@ const (
 )
 
 func DetectProtocol() Protocol {
-	if checkITerm2Support() {
-		return ITerm2
-	}
 	if checkKittySupport() {
 		return Kitty
+	}
+	if checkITerm2Support() {
+		return ITerm2
 	}
 	return Unsupported
 }
@@ -34,11 +34,11 @@ func checkITerm2Support() bool {
 	switch {
 	case os.Getenv("LC_TERMINAL") == "iTerm2" || os.Getenv("TERM_PROGRAM") == "iTerm.app":
 		return true
-	case os.Getenv("TERM_PROGRAM") == "wezterm":
-		return true
 	case os.Getenv("TERM_PROGRAM") == "vscode":
 		return true
 	case os.Getenv("TERM") == "mintty":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "tmux":
 		return true
 	default:
 		return false
@@ -51,8 +51,8 @@ func dumbKittySupport() bool {
 		return true
 	case os.Getenv("TERM_PROGRAM") == "ghostty":
 		return true
-	case strings.Contains(os.Getenv("TERMINFO"), "Ghostty"): // tmux
-		return true
+	// case strings.Contains(os.Getenv("TERMINFO"), "Ghostty"): // tmux
+	// 	return true
 	default:
 		return false
 	}
@@ -60,10 +60,6 @@ func dumbKittySupport() bool {
 
 // Send a query action followed by a request for primary device attributes
 func checkKittySupport() bool {
-	return dumbKittySupport()
-	// Send a query action followed by a request for primary device attributes
-	fmt.Printf("\x1b_Gi=31,s=1,v=1,a=q,t=t;%s\x1b\\", "AAAA")
-
 	// Read response
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
@@ -71,9 +67,15 @@ func checkKittySupport() bool {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
+	// Send a query action followed by a request for primary device attributes
+	fmt.Print("\x1b_Gi=31,s=1,v=1,a=q,t=t;AAAA\x1b\\")
+
 	response := make([]byte, 100)
 	os.Stdin.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	n, _ := os.Stdin.Read(response)
+	n, err := os.Stdin.Read(response)
+	if err != nil {
+		return false
+	}
 
 	if n > 0 && strings.Contains(string(response[:n]), "\033_Gi=31;") {
 		return true

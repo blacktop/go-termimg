@@ -2,7 +2,6 @@ package termimg
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -56,6 +55,11 @@ func (t *TermImg) Info() string {
 }
 
 func (t *TermImg) Close() error {
+	if t.protocol == Kitty {
+		if err := checkKittyResponse(); err != nil {
+			return err
+		}
+	}
 	if t.closer == nil {
 		return nil
 	}
@@ -96,50 +100,21 @@ func (ti *TermImg) Render() (string, error) {
 	}
 }
 
+func (ti *TermImg) Clear() (string, error) {
+	switch ti.protocol {
+	case ITerm2:
+		return ti.clearITerm2()
+	case Kitty:
+		return ti.clearKitty()
+	default:
+		return "", fmt.Errorf("unsupported protocol")
+	}
+}
+
 func (ti *TermImg) AsPNGBytes() ([]byte, error) {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, *ti.img); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-func (ti *TermImg) renderITerm2() (string, error) {
-	if ti.pngBytes == nil {
-		data, err := ti.AsPNGBytes()
-		if err != nil {
-			return "", err
-		}
-		ti.pngBytes = data
-	}
-	// Build iTerm2 escape sequence
-	out := "\033]"
-	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		out = "\033Ptmux;\033\033]"
-	}
-	// out += fmt.Sprintf("1337;File=inline=1:%s", base64.StdEncoding.EncodeToString(ti.pngBytes))
-	out += fmt.Sprintf("\x1b]1337;File=inline=1;size=%d;width=%dpx;height=%dpx:%s\x07",
-		len(ti.pngBytes),
-		(*ti.img).Bounds().Dx(),
-		(*ti.img).Bounds().Dy(),
-		base64.StdEncoding.EncodeToString(ti.pngBytes),
-	)
-	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		out += "\a\033\\\n"
-	} else {
-		out += "\a\n"
-	}
-	return out, nil
-}
-
-func (ti *TermImg) renderKitty() (string, error) {
-	if ti.pngBytes == nil {
-		data, err := ti.AsPNGBytes()
-		if err != nil {
-			return "", err
-		}
-		ti.pngBytes = data
-	}
-	// Print Kitty escape sequence
-	return fmt.Sprintf("\033_Ga=T,f=100;%s\033\\", base64.StdEncoding.EncodeToString(ti.pngBytes)), nil
 }
