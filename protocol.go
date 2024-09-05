@@ -51,6 +51,8 @@ func dumbKittySupport() bool {
 		return true
 	case os.Getenv("TERM_PROGRAM") == "ghostty":
 		return true
+	case strings.Contains(os.Getenv("TERMINFO"), "Ghostty"): // tmux
+		return true
 	default:
 		return false
 	}
