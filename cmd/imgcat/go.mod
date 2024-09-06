@@ -4,7 +4,7 @@ go 1.23.0
 
 require (
 	github.com/apex/log v1.9.0
-	github.com/blacktop/go-termimg v0.1.15
+	github.com/blacktop/go-termimg v0.1.16
 	github.com/spf13/cobra v1.8.1
 )
 
