@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"slices"
 )
 
 func checkITerm2Support() bool {
@@ -21,7 +22,7 @@ func checkITerm2Support() bool {
 }
 
 func (ti *TermImg) renderITerm2() (string, error) {
-	if ti.b64String == "" {
+	if ti.encoded == "" {
 		data, err := ti.AsJPEGBytes()
 		if err != nil {
 			return "", err
@@ -29,18 +30,35 @@ func (ti *TermImg) renderITerm2() (string, error) {
 		ti.size = len(data)
 		ti.width = (*ti.img).Bounds().Dx()
 		ti.height = (*ti.img).Bounds().Dy()
-		ti.b64String = base64.StdEncoding.EncodeToString(data)
+		// encode iTerm2 escape sequence
+		if len(data) > 0x40000 {
+			isfirt := true
+			for chunk := range slices.Chunk(data, 0x40000) {
+				if isfirt {
+					ti.encoded = START + fmt.Sprintf("]1337;MultipartFile=inline=1;size=%d;width=%dpx;height=%dpx;doNotMoveCursor=1:%s\x07",
+						ti.size,
+						ti.width,
+						ti.height,
+						base64.StdEncoding.EncodeToString(chunk),
+					) + ESCAPE + CLOSE
+					isfirt = false
+				} else {
+					ti.encoded += START + fmt.Sprintf("]1337;FilePart=inline=1:%s\x07",
+						base64.StdEncoding.EncodeToString(chunk),
+					) + ESCAPE + CLOSE
+				}
+			}
+			ti.encoded += START + "]1337;FileEnd\x07" + ESCAPE + CLOSE
+		} else {
+			ti.encoded = START + fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx;doNotMoveCursor=1:%s\x07",
+				ti.size,
+				ti.width,
+				ti.height,
+				base64.StdEncoding.EncodeToString(data),
+			) + ESCAPE + CLOSE
+		}
 	}
-
-	// Build iTerm2 escape sequence
-	out := fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx;doNotMoveCursor=1:%s\x07",
-		ti.size,
-		ti.width,
-		ti.height,
-		ti.b64String,
-	)
-
-	return START + out + ESCAPE + CLOSE, nil
+	return ti.encoded, nil
 }
 
 func (ti *TermImg) printITerm2() error {

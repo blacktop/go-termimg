@@ -21,6 +21,8 @@ To use this package, simply call the RenderImage function with the path to your 
 	if err != nil {
 	    log.Fatal(err)
 	}
+	defer ti.Close()
+
 	if err := ti.Print(); err != nil {
 	    log.Fatal(err)
 	}

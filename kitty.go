@@ -118,7 +118,7 @@ func checkKittySupport() bool {
 
 // TODO: chunk this up with the `m=1` command
 func (ti *TermImg) renderKitty() (string, error) {
-	if ti.b64String == "" {
+	if ti.encoded == "" {
 		data, err := ti.AsPNGBytes()
 		if err != nil {
 			return "", err
@@ -126,19 +126,18 @@ func (ti *TermImg) renderKitty() (string, error) {
 		ti.size = len(data)
 		ti.width = (*ti.img).Bounds().Dx()
 		ti.height = (*ti.img).Bounds().Dy()
-		ti.b64String = base64.StdEncoding.EncodeToString(data)
+		// encode Kitty escape sequence
+		ti.encoded = START + fmt.Sprintf(
+			"_Ga=T,f=100,s=%d,v=%d%s%s%s;%s",
+			ti.width,
+			ti.height,
+			TRANSFER_DIRECT,
+			SUPPRESS_OK,
+			SUPPRESS_ERR,
+			base64.StdEncoding.EncodeToString(data),
+		) + ESCAPE + CLOSE
 	}
-	// Print Kitty escape sequence
-	return START + fmt.Sprintf(
-		"_Ga=T,f=100,s=%d,v=%d%s%s%s;%s",
-		ti.width,
-		ti.height,
-		TRANSFER_DIRECT,
-		SUPPRESS_OK,
-		SUPPRESS_ERR,
-		ti.b64String,
-	) + ESCAPE + CLOSE, nil
-	// return "\x1b" + fmt.Sprintf("_Ga=T,f=100;%s", ti.b64String) + "\x1b\\", nil
+	return ti.encoded, nil
 }
 
 func (ti *TermImg) printKitty() error {

@@ -21,8 +21,15 @@ THE SOFTWARE.
 */
 package main
 
-import "github.com/blacktop/go-termimg/cmd/imgcat/cmd"
+import (
+	"github.com/blacktop/go-termimg"
+)
 
 func main() {
-	cmd.Execute()
+	ti, err := termimg.Open("/Users/blacktop/Developer/Mine/blacktop/go-termimg/test/image.png")
+	if err != nil {
+		panic(err)
+	}
+	defer ti.Close()
+	ti.Print()
 }

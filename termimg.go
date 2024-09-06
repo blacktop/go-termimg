@@ -37,14 +37,14 @@ func init() {
 }
 
 type TermImg struct {
-	protocol  Protocol
-	img       *image.Image
-	format    string
-	size      int
-	width     int
-	height    int
-	b64String string
-	closer    io.Closer
+	protocol Protocol
+	img      *image.Image
+	format   string
+	size     int
+	width    int
+	height   int
+	encoded  string
+	closer   io.Closer
 }
 
 func Open(imagePath string) (*TermImg, error) {
@@ -75,7 +75,7 @@ func Open(imagePath string) (*TermImg, error) {
 }
 
 func (t *TermImg) Info() string {
-	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, (*t.img).Bounds().Dx(), (*t.img).Bounds().Dy())
+	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, t.width, t.height)
 }
 
 func (t *TermImg) Close() error {
