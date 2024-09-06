@@ -11,6 +11,8 @@ import (
 	"golang.org/x/term"
 )
 
+// ref: https://github.com/kovidgoyal/kitty/tree/master/kittens/icat
+
 const (
 	DATA_RGBA_32_BIT = "f=32" // default
 	DATA_RGBA_24_BIT = "f=24"
@@ -174,6 +176,7 @@ func (ti *TermImg) sendFileKitty() error {
 	if ti.path == "" {
 		return fmt.Errorf("no image path provided")
 	}
+	// send the image file on the local filesystem
 	fmt.Println(
 		START +
 			fmt.Sprintf("_G%s;%s",
