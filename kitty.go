@@ -103,7 +103,7 @@ func checkKittySupport() bool {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	id := "31"
+	id := "42"
 
 	// Send a query action followed by a request for primary device attributes
 	fmt.Printf(START + fmt.Sprintf("_Gi=%s,s=1,v=1,a=q,t=d,f=24;AAAA", id) + ESCAPE + CLOSE)
