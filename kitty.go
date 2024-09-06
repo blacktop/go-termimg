@@ -16,9 +16,11 @@ const (
 	DATA_RGBA_24_BIT = "f=24"
 	DATA_PNG         = "f=100"
 
-	ACTION_TRANSFER = "a=T"
-	ACTION_DELETE   = "a=d"
-	ACTION_QUERY    = "a=q"
+	ACTION_TRANSFER  = "a=T"
+	ACTION_DELETE    = "a=d"
+	ACTION_QUERY     = "a=q"
+	ACTION_ANIMATE   = "a=a"
+	ACTION_PLACEMENT = "a=p"
 
 	COMPRESS_ZLIB = "0=z"
 
