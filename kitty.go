@@ -29,10 +29,10 @@ const (
 	TRANSFER_TEMP   = "t=t"
 	TRANSFER_SHARED = "t=s"
 
-	DELETE_WITH_ID           = "d=i"
-	DELETE_NEWEST            = "d=n"
-	DELETE_AT_CURSOR         = "d=c"
-	DELEATE_ANIMATION_FRAMES = "d=a"
+	DELETE_WITH_ID          = "d=i"
+	DELETE_NEWEST           = "d=n"
+	DELETE_AT_CURSOR        = "d=c"
+	DELETE_ANIMATION_FRAMES = "d=a"
 	// TODO: add more delete options
 
 	SUPPRESS_OK  = "q=1"
