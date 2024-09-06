@@ -139,12 +139,16 @@ func (ti *TermImg) renderKitty() (string, error) {
 		ti.height = (*ti.img).Bounds().Dy()
 		// encode Kitty escape sequence
 		ti.encoded = START + fmt.Sprintf(
-			"_Ga=T,f=100,s=%d,v=%d%s%s%s;%s",
+			"_Gs=%d,v=%d,%s;%s",
 			ti.width,
 			ti.height,
-			TRANSFER_DIRECT,
-			SUPPRESS_OK,
-			SUPPRESS_ERR,
+			strings.Join([]string{
+				DATA_PNG,
+				ACTION_TRANSFER,
+				TRANSFER_DIRECT,
+				SUPPRESS_OK,
+				SUPPRESS_ERR,
+			}, ","),
 			base64.StdEncoding.EncodeToString(data),
 		) + ESCAPE + CLOSE
 	}
