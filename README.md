@@ -30,11 +30,9 @@ ti, err := termimg.Open("path/to/your/image.png")
 if err != nil {
     log.Fatal(err)
 }
-imgstr, err := ti.Render()
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Println(imgstr)
+defer ti.Close()
+
+ti.Print()
 ```
 
 ### `imgcat` demo tool
