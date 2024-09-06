@@ -5,25 +5,36 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
 )
 
 const (
-	DATA_RGBA_32_BIT = ",f=32" // default
-	DATA_RGBA_24_BIT = ",f=24"
-	DATA_PNG         = ",f=100"
+	DATA_RGBA_32_BIT = "f=32" // default
+	DATA_RGBA_24_BIT = "f=24"
+	DATA_PNG         = "f=100"
 
-	COMPRESS_ZLIB = ",0=z"
+	ACTION_TRANSFER = "a=T"
+	ACTION_DELETE   = "a=d"
+	ACTION_QUERY    = "a=q"
 
-	TRANSFER_DIRECT = ",t=d"
-	TRANSFER_FILE   = ",t=f"
-	TRANSFER_TEMP   = ",t=t"
-	TRANSFER_SHARED = ",t=s"
+	COMPRESS_ZLIB = "0=z"
 
-	SUPPRESS_OK  = ",q=1"
-	SUPPRESS_ERR = ",q=2"
+	TRANSFER_DIRECT = "t=d"
+	TRANSFER_FILE   = "t=f"
+	TRANSFER_TEMP   = "t=t"
+	TRANSFER_SHARED = "t=s"
+
+	DELETE_WITH_ID           = "d=i"
+	DELETE_NEWEST            = "d=n"
+	DELETE_AT_CURSOR         = "d=c"
+	DELEATE_ANIMATION_FRAMES = "d=a"
+	// TODO: add more delete options
+
+	SUPPRESS_OK  = "q=1"
+	SUPPRESS_ERR = "q=2"
 )
 
 var ErrEmptyResponse = fmt.Errorf("empty response")
@@ -159,9 +170,14 @@ func (ti *TermImg) sendFileKitty() error {
 	}
 	fmt.Println(
 		START +
-			fmt.Sprintf("_Gf=100,t=f,a=T%s%s;%s",
-				SUPPRESS_OK,
-				SUPPRESS_ERR,
+			fmt.Sprintf("_G%s;%s",
+				strings.Join([]string{
+					DATA_PNG,
+					ACTION_TRANSFER,
+					TRANSFER_FILE,
+					SUPPRESS_OK,
+					SUPPRESS_ERR,
+				}, ","),
 				base64.StdEncoding.EncodeToString([]byte(ti.path)),
 			) +
 			ESCAPE + CLOSE)
@@ -169,6 +185,16 @@ func (ti *TermImg) sendFileKitty() error {
 }
 
 func (ti *TermImg) clearKitty() error {
-	fmt.Println(START + fmt.Sprintf("_Ga=d%s%s", SUPPRESS_OK, SUPPRESS_ERR) + ESCAPE + CLOSE) // delete all visible images
+	// delete all visible placements
+	fmt.Println(
+		START +
+			fmt.Sprintf("_G%s",
+				strings.Join([]string{
+					ACTION_DELETE,
+					SUPPRESS_OK,
+					SUPPRESS_ERR,
+				}, ","),
+			) +
+			ESCAPE + CLOSE)
 	return nil
 }
