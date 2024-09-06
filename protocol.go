@@ -2,9 +2,7 @@ package termimg
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"os/exec"
 )
 
 type Protocol int
@@ -36,40 +34,9 @@ func DetectProtocol() Protocol {
 	} else if checkKittySupport() {
 		return Kitty
 	} else {
+		if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
+			return ITerm2 // FIXME: this is a dumb guess
+		}
 		return Unsupported
-	}
-}
-
-func checkITerm2Support() bool {
-	// iTerm2 doesn't have a specific query mechanism, so we'll use a heuristic to check the env
-	switch {
-	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
-		return true
-	case os.Getenv("TERM_PROGRAM") == "vscode":
-		return true
-	case os.Getenv("TERM") == "mintty":
-		return true
-	default:
-		return false
-	}
-}
-
-func dumbKittySupport() bool {
-	switch {
-	case os.Getenv("KITTY_WINDOW_ID") != "":
-		return true
-	case os.Getenv("TERM_PROGRAM") == "ghostty":
-		return true
-	case os.Getenv("TERM_PROGRAM") == "WezTerm":
-		return true
-	default:
-		return false
-	}
-}
-
-func tmuxPassthrough() {
-	cmd := exec.Command("tmux", "set", "-p", "allow-passthrough", "on")
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("Failed to run tmux command: %v", err)
 	}
 }

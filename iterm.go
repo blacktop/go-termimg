@@ -3,7 +3,22 @@ package termimg
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 )
+
+func checkITerm2Support() bool {
+	// iTerm2 doesn't have a specific query mechanism, so we'll use a heuristic to check the env
+	switch {
+	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "vscode":
+		return true
+	case os.Getenv("TERM") == "mintty":
+		return true
+	default:
+		return false
+	}
+}
 
 func (ti *TermImg) renderITerm2() (string, error) {
 	if ti.b64String == "" {

@@ -78,11 +78,24 @@ func readStdin() []byte {
 	}
 }
 
+func dumbKittySupport() bool {
+	switch {
+	case os.Getenv("KITTY_WINDOW_ID") != "":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "ghostty":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "WezTerm":
+		return true
+	default:
+		return false
+	}
+}
+
 // Send a query action followed by a request for primary device attributes
 func checkKittySupport() bool {
-	// if dumbKittySupport() {
-	// 	return true
-	// }
+	if dumbKittySupport() {
+		return true
+	}
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
