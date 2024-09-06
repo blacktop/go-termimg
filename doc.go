@@ -21,11 +21,9 @@ To use this package, simply call the RenderImage function with the path to your 
 	if err != nil {
 	    log.Fatal(err)
 	}
-	imgstr, err := ti.Render()
-	if err != nil {
-		log.Fatal(err)
+	if err := ti.Print(); err != nil {
+	    log.Fatal(err)
 	}
-	fmt.Println(imgstr)
 
 The package will automatically detect the supported protocol and render the image
 using the appropriate method.
