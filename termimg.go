@@ -11,6 +11,7 @@ import (
 	_ "image/png"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -37,6 +38,7 @@ func init() {
 }
 
 type TermImg struct {
+	path     string
 	protocol Protocol
 	img      *image.Image
 	format   string
@@ -48,19 +50,26 @@ type TermImg struct {
 }
 
 func Open(imagePath string) (*TermImg, error) {
+	var err error
+
 	protocol := DetectProtocol()
 	if protocol == Unsupported {
 		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", protocol.Supported())
 	}
 
+	imagePath, err = filepath.Abs(imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for image: %s", err)
+	}
+
 	f, err := os.Open(imagePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open image: %s", err)
 	}
 
 	img, format, err := image.Decode(f)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode image: %s", err)
 	}
 
 	switch format {
@@ -71,7 +80,7 @@ func Open(imagePath string) (*TermImg, error) {
 		return nil, fmt.Errorf("unsupported image format: %s; supported formats: (%s)", format, strings.Join(supportedFormats, ", "))
 	}
 
-	return &TermImg{protocol: protocol, img: &img, format: format, closer: f}, nil
+	return &TermImg{path: imagePath, protocol: protocol, img: &img, format: format, closer: f}, nil
 }
 
 func (t *TermImg) Info() string {
@@ -93,7 +102,7 @@ func NewTermImg(r io.Reader) (*TermImg, error) {
 
 	img, format, err := image.Decode(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode image: %s", err)
 	}
 
 	switch format {
@@ -145,7 +154,7 @@ func (ti *TermImg) Clear() error {
 func (ti *TermImg) AsPNGBytes() ([]byte, error) {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, *ti.img); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to encode image as PNG: %s", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -153,7 +162,7 @@ func (ti *TermImg) AsPNGBytes() ([]byte, error) {
 func (ti *TermImg) AsJPEGBytes() ([]byte, error) {
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, *ti.img, nil); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to encode image as JPEG: %s", err)
 	}
 	return buf.Bytes(), nil
 }

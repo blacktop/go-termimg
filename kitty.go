@@ -141,11 +141,30 @@ func (ti *TermImg) renderKitty() (string, error) {
 }
 
 func (ti *TermImg) printKitty() error {
-	out, err := ti.renderKitty()
-	if err != nil {
-		return err
+	// try to send the image locally first
+	if err := ti.sendFileKitty(); err != nil {
+		// if that fails, try to stream it
+		out, err := ti.renderKitty()
+		if err != nil {
+			return err
+		}
+		fmt.Println(out)
 	}
-	fmt.Println(out)
+	return nil
+}
+
+func (ti *TermImg) sendFileKitty() error {
+	if ti.path == "" {
+		return fmt.Errorf("no image path provided")
+	}
+	fmt.Println(
+		START +
+			fmt.Sprintf("_Gf=100,t=f,a=T%s%s;%s",
+				SUPPRESS_OK,
+				SUPPRESS_ERR,
+				base64.StdEncoding.EncodeToString([]byte(ti.path)),
+			) +
+			ESCAPE + CLOSE)
 	return nil
 }
 
