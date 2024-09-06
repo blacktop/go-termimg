@@ -10,7 +10,7 @@ work: clean ## Work on go-termimg package
 	@go work use .  ../../../go-termimg
 
 .PHONY: clean
-clean: ## Clean up
+clean: ## Clean up go.work
 	@echo " > 🧼 Cleaning up"
 	@rm go.work || true
 	@rm go.work.sum || true
