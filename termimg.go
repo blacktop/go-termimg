@@ -54,7 +54,7 @@ func Open(imagePath string) (*TermImg, error) {
 
 	protocol := DetectProtocol()
 	if protocol == Unsupported {
-		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", protocol.Supported())
+		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", SupportedProtocols())
 	}
 
 	imagePath, err = filepath.Abs(imagePath)
