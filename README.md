@@ -57,4 +57,4 @@ imgcat path/to/your/image.png
 
 ## License
 
-MIT Copyright (c) 2024 **blacktop**
+MIT Copyright (c) 2024-2025 **blacktop**
