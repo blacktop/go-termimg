@@ -97,7 +97,7 @@ func (t *TermImg) Close() error {
 func NewTermImg(r io.Reader) (*TermImg, error) {
 	protocol := DetectProtocol()
 	if protocol == Unsupported {
-		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %#v", []Protocol{ITerm2, Kitty})
+		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", SupportedProtocols())
 	}
 
 	img, format, err := image.Decode(r)

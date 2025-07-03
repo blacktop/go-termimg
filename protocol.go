@@ -24,7 +24,7 @@ func (p Protocol) String() string {
 	}
 }
 
-func (p Protocol) Supported() string {
+func SupportedProtocols() string {
 	return fmt.Sprintf("%s, %s", ITerm2, Kitty)
 }
 
