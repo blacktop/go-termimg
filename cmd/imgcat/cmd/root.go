@@ -31,13 +31,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var verbose bool
-var clear bool
+var (
+	verbose bool
+	clear   bool
+	width   uint
+	height  uint
+)
 
 func init() {
 	log.SetHandler(clihander.Default)
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "V", false, "Enable verbose logging")
 	rootCmd.PersistentFlags().BoolVarP(&clear, "clear", "c", false, "Clear the image after displaying it")
+	rootCmd.PersistentFlags().UintVarP(&width, "width", "W", 0, "Resize image to width")
+	rootCmd.PersistentFlags().UintVarP(&height, "height", "H", 0, "Resize image to height")
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -56,6 +62,14 @@ var rootCmd = &cobra.Command{
 			log.Fatalf("Failed to open image: %v", err)
 		}
 		defer timg.Close()
+
+		if width > 0 || height > 0 {
+			log.WithFields(log.Fields{
+				"width":  width,
+				"height": height,
+			}).Debug("Resizing Image")
+			timg.Resize(width, height)
+		}
 
 		log.Debugf("Image Info: %s", timg.Info())
 

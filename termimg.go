@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/nfnt/resize"
 )
 
 const ESC_ERASE_DISPLAY = "\x1b[2J\x1b[0;0H"
@@ -38,15 +40,18 @@ func init() {
 }
 
 type TermImg struct {
-	path     string
-	protocol Protocol
-	img      *image.Image
-	format   string
-	size     int
-	width    int
-	height   int
-	encoded  string
-	closer   io.Closer
+	path         string
+	protocol     Protocol
+	img          *image.Image
+	format       string
+	size         int
+	width        int
+	height       int
+	origWidth    int
+	origHeight   int
+	closer       io.Closer
+	resizeWidth  uint
+	resizeHeight uint
 }
 
 func Open(imagePath string) (*TermImg, error) {
@@ -80,10 +85,23 @@ func Open(imagePath string) (*TermImg, error) {
 		return nil, fmt.Errorf("unsupported image format: %s; supported formats: (%s)", format, strings.Join(supportedFormats, ", "))
 	}
 
-	return &TermImg{path: imagePath, protocol: protocol, img: &img, format: format, closer: f}, nil
+	return &TermImg{
+		path:       imagePath,
+		protocol:   protocol,
+		img:        &img,
+		format:     format,
+		closer:     f,
+		width:      img.Bounds().Dx(),
+		height:     img.Bounds().Dy(),
+		origWidth:  img.Bounds().Dx(),
+		origHeight: img.Bounds().Dy(),
+	}, nil
 }
 
 func (t *TermImg) Info() string {
+	if t.resizeWidth > 0 || t.resizeHeight > 0 {
+		return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d (resized from %dx%d)", t.protocol, t.format, t.width, t.height, t.origWidth, t.origHeight)
+	}
 	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, t.width, t.height)
 }
 
@@ -113,7 +131,24 @@ func NewTermImg(r io.Reader) (*TermImg, error) {
 		return nil, fmt.Errorf("unsupported image format: %s; supported formats: (%s)", format, strings.Join(supportedFormats, ", "))
 	}
 
-	return &TermImg{protocol: protocol, img: &img, format: format}, nil
+	return &TermImg{
+		protocol:   protocol,
+		img:        &img,
+		format:     format,
+		width:      img.Bounds().Dx(),
+		height:     img.Bounds().Dy(),
+		origWidth:  img.Bounds().Dx(),
+		origHeight: img.Bounds().Dy(),
+	}, nil
+}
+
+func (t *TermImg) Resize(width, height uint) {
+	t.resizeWidth = width
+	t.resizeHeight = height
+	resizedImg := resize.Resize(width, height, *t.img, resize.Lanczos3)
+	t.img = &resizedImg
+	t.width = resizedImg.Bounds().Dx()
+	t.height = resizedImg.Bounds().Dy()
 }
 
 func (ti *TermImg) Render() (string, error) {

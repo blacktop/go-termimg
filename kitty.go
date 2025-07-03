@@ -133,42 +133,41 @@ func checkKittySupport() bool {
 
 // TODO: chunk this up with the `m=1` command
 func (ti *TermImg) renderKitty() (string, error) {
-	if ti.encoded == "" {
-		data, err := ti.AsPNGBytes()
-		if err != nil {
-			return "", err
-		}
-		ti.size = len(data)
-		ti.width = (*ti.img).Bounds().Dx()
-		ti.height = (*ti.img).Bounds().Dy()
-		// encode Kitty escape sequence
-		ti.encoded = START + fmt.Sprintf(
-			"_Gs=%d,v=%d,%s;%s",
-			ti.width,
-			ti.height,
-			strings.Join([]string{
-				DATA_PNG,
-				ACTION_TRANSFER,
-				TRANSFER_DIRECT,
-				SUPPRESS_OK,
-				SUPPRESS_ERR,
-			}, ","),
-			base64.StdEncoding.EncodeToString(data),
-		) + ESCAPE + CLOSE
+	data, err := ti.AsPNGBytes()
+	if err != nil {
+		return "", err
 	}
-	return ti.encoded, nil
+	ti.size = len(data)
+	// encode Kitty escape sequence
+	return START + fmt.Sprintf(
+		"_Gs=%d,v=%d,%s;%s",
+		ti.width,
+		ti.height,
+		strings.Join([]string{
+			DATA_PNG,
+			ACTION_TRANSFER,
+			TRANSFER_DIRECT,
+			SUPPRESS_OK,
+			SUPPRESS_ERR,
+		}, ","),
+		base64.StdEncoding.EncodeToString(data),
+	) + ESCAPE + CLOSE, nil
 }
 
 func (ti *TermImg) printKitty() error {
 	// try to send the image locally first
-	if err := ti.sendFileKitty(); err != nil {
-		// if that fails, try to stream it
-		out, err := ti.renderKitty()
-		if err != nil {
-			return err
+	if ti.resizeWidth == 0 && ti.resizeHeight == 0 {
+		if err := ti.sendFileKitty(); err == nil {
+			return nil
 		}
-		fmt.Println(out)
 	}
+	// if that fails, try to stream it
+	out, err := ti.renderKitty()
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
+
 	return nil
 }
 
