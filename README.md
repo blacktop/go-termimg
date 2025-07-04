@@ -1,8 +1,20 @@
-# go-termimg
+<p align="center">
+  <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png" height="400">
+  <source media="(prefers-color-scheme: light)" srcset="docs/logo-light.png" height="400">
+  <img alt="Fallback logo" src="docs/logo-dark.png" height="400">
+</picture>
 
-[![Go](https://github.com/blacktop/go-termimg/actions/workflows/go.yml/badge.svg)](https://github.com/blacktop/go-termimg/actions/workflows/go.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/blacktop/go-termimg.svg)](https://pkg.go.dev/github.com/blacktop/go-termimg) [![License](http://img.shields.io/:license-mit-blue.svg)](http://doge.mit-license.org)
-
-> Go terminal image package
+  <h4><p align="center">Go terminal image package</p></h4>
+  <p align="center">
+    <a href="https://github.com/blacktop/go-termimg/actions" alt="Actions">
+          <img src="https://github.com/blacktop/go-termimg/actions/workflows/go.yml/badge.svg" /></a>
+    <a href="https://pkg.go.dev/github.com/blacktop/go-termimg" alt="Go Reference">
+          <img src="https://pkg.go.dev/badge/github.com/blacktop/go-termimg.svg" /></a>
+    <a href="http://doge.mit-license.org" alt="LICENSE">
+          <img src="https://img.shields.io/:license-mit-blue.svg" /></a>
+</p>
+<br>
 
 ## Supported
 
