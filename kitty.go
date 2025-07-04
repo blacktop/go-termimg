@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
@@ -46,6 +48,12 @@ var ErrEmptyResponse = fmt.Errorf("empty response")
 type KittyResponse struct {
 	ID      string
 	Message string
+}
+
+var kittyIDCounter uint64
+
+func genKittyID() string {
+	return strconv.FormatUint(atomic.AddUint64(&kittyIDCounter, 1), 10)
 }
 
 func parseResponse(in []byte) (*KittyResponse, error) {
@@ -108,10 +116,26 @@ func dumbKittySupport() bool {
 
 // Send a query action followed by a request for primary device attributes
 func checkKittySupport() bool {
-	if dumbKittySupport() {
+	// First try environment variables (fast path)
+	switch {
+	case os.Getenv("KITTY_WINDOW_ID") != "":
+		return true
+	case strings.Contains(strings.ToLower(os.Getenv("TERM")), "kitty"):
+		return true
+	case os.Getenv("TERM_PROGRAM") == "ghostty":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "WezTerm":
+		return true
+	case os.Getenv("TERM_PROGRAM") == "rio":
 		return true
 	}
 
+	// Try control sequence query (if terminal is interactive)
+	if fileInfo, _ := os.Stdin.Stat(); (fileInfo.Mode() & os.ModeCharDevice) == 0 {
+		return false
+	}
+
+	// Perform the actual Kitty query
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		return false
@@ -121,13 +145,29 @@ func checkKittySupport() bool {
 	id := "42"
 
 	// Send a query action followed by a request for primary device attributes
-	fmt.Printf(START + fmt.Sprintf("_Gi=%s,s=1,v=1,a=q,t=d,f=24;AAAA", id) + ESCAPE + CLOSE)
+	fmt.Printf("\x1b_Gi=%s,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\", id)
 
-	// Read response
-	if resp, err := parseResponse(readStdin()); err != nil {
+	// Set up a channel for timeout
+	responseChan := make(chan bool, 1)
+
+	go func() {
+		buf := make([]byte, 256)
+		n, err := os.Stdin.Read(buf)
+		if err == nil && n > 0 {
+			// Check if response contains our ID
+			response := string(buf[:n])
+			responseChan <- strings.Contains(response, id)
+		} else {
+			responseChan <- false
+		}
+	}()
+
+	// Wait for response with timeout
+	select {
+	case result := <-responseChan:
+		return result
+	case <-time.After(100 * time.Millisecond):
 		return false
-	} else {
-		return resp.ID == id
 	}
 }
 
@@ -138,18 +178,31 @@ func (ti *TermImg) renderKitty() (string, error) {
 		return "", err
 	}
 	ti.size = len(data)
+
+	opts := []string{
+		DATA_PNG,
+		ACTION_TRANSFER,
+		TRANSFER_DIRECT,
+		SUPPRESS_OK,
+		SUPPRESS_ERR,
+	}
+
+	// assign stable kitty image id so we can place/animate later
+	if ti.kittyID == "" {
+		ti.kittyID = genKittyID()
+	}
+	opts = append(opts, fmt.Sprintf("i=%s", ti.kittyID))
+
+	if ti.zIndex != 0 {
+		opts = append(opts, fmt.Sprintf("z=%d", ti.zIndex))
+	}
+
 	// encode Kitty escape sequence
 	return START + fmt.Sprintf(
 		"_Gs=%d,v=%d,%s;%s",
-		ti.width,
-		ti.height,
-		strings.Join([]string{
-			DATA_PNG,
-			ACTION_TRANSFER,
-			TRANSFER_DIRECT,
-			SUPPRESS_OK,
-			SUPPRESS_ERR,
-		}, ","),
+		ti.Width,
+		ti.Height,
+		strings.Join(opts, ","),
 		base64.StdEncoding.EncodeToString(data),
 	) + ESCAPE + CLOSE, nil
 }
@@ -205,4 +258,46 @@ func (ti *TermImg) clearKitty() error {
 			) +
 			ESCAPE + CLOSE)
 	return nil
+}
+
+// KittyPlace positions the already-transferred image at cell coordinates (x,y)
+// with the current zIndex. Requires that the image was previously printed and
+// therefore has a kittyID.
+func (ti *TermImg) KittyPlace(xCells, yCells int) error {
+	if ti.kittyID == "" {
+		return fmt.Errorf("kitty image id not set – print image first")
+	}
+
+	opts := []string{
+		ACTION_PLACEMENT,
+		fmt.Sprintf("i=%s", ti.kittyID),
+		fmt.Sprintf("x=%d", xCells),
+		fmt.Sprintf("y=%d", yCells),
+		SUPPRESS_OK,
+		SUPPRESS_ERR,
+	}
+
+	if ti.zIndex != 0 {
+		opts = append(opts, fmt.Sprintf("z=%d", ti.zIndex))
+	}
+
+	fmt.Print(START + "_G" + strings.Join(opts, ",") + ESCAPE + CLOSE)
+	return nil
+}
+
+// KittyAnimate plays an animation of previously transferred image ids.
+// ids must be valid kitty image ids (including ti.kittyID from other images).
+func KittyAnimate(ids []string, delayMs int, loops int) {
+	if len(ids) == 0 {
+		return
+	}
+	opts := []string{
+		ACTION_ANIMATE,
+		fmt.Sprintf("i=%s", strings.Join(ids, ":")),
+		fmt.Sprintf("d=%d", delayMs),
+		fmt.Sprintf("l=%d", loops),
+		SUPPRESS_OK,
+		SUPPRESS_ERR,
+	}
+	fmt.Print(START + "_G" + strings.Join(opts, ",") + ESCAPE + CLOSE)
 }
