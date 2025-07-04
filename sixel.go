@@ -4,206 +4,252 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
+	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/makeworld-the-better-one/dither/v2"
 	"github.com/mattn/go-sixel"
 	"github.com/soniakeys/quant/median"
-	"golang.org/x/term"
 )
 
-// checkSixelSupport checks if the terminal supports Sixel graphics.
-func checkSixelSupport() bool {
-	// First check environment variables
-	term := os.Getenv("TERM")
-	termProgram := os.Getenv("TERM_PROGRAM")
-
-	// Check TERM variable
-	switch {
-	case strings.Contains(term, "sixel"):
-		return true
-	case strings.Contains(term, "mlterm"):
-		return true
-	case strings.Contains(term, "foot"):
-		return true
-	case strings.Contains(term, "rio"):
-		return true
-	case strings.Contains(term, "st-256color"):
-		return true
-	case strings.Contains(term, "xterm") && os.Getenv("XTERM_VERSION") != "":
-		// xterm needs to be started with -ti 340 flag
-		return true
-	case strings.Contains(term, "wezterm"):
-		return true
-	case strings.Contains(term, "yaft"):
-		return true
-	case strings.Contains(term, "alacritty"):
-		return true
-	}
-
-	// Check TERM_PROGRAM variable
-	switch {
-	case strings.Contains(termProgram, "mlterm"):
-		return true
-	case termProgram == "iTerm.app":
-		// iTerm2 has experimental Sixel support
-		return true
-	case termProgram == "mintty":
-		return true
-	case termProgram == "WezTerm":
-		return true
-	case termProgram == "rio":
-		return true
-	}
-
-	// Try control sequence query if terminal is interactive
-	if fileInfo, _ := os.Stdin.Stat(); (fileInfo.Mode() & os.ModeCharDevice) == 0 {
-		return false
-	}
-
-	return checkSixelQuery()
+// SixelRenderer implements the Renderer interface for Sixel protocol
+type SixelRenderer struct {
+	lastWidth  int // Track last rendered width in lines
+	lastHeight int // Track last rendered height in lines
 }
 
-// checkSixelQuery sends device attributes query to check for Sixel
-func checkSixelQuery() bool {
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+// Protocol returns the protocol type
+func (r *SixelRenderer) Protocol() Protocol {
+	return Sixel
+}
+
+// Render generates the escape sequence for displaying the image
+func (r *SixelRenderer) Render(img image.Image, opts RenderOptions) (string, error) {
+	// Process the image (resize, dither, etc.)
+	processed, err := processImage(img, opts)
 	if err != nil {
-		return false
+		return "", fmt.Errorf("failed to process image: %w", err)
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Send Primary Device Attributes query
-	fmt.Print("\x1b[c")
-
-	// Set up a channel for timeout
-	responseChan := make(chan bool, 1)
-
-	go func() {
-		buf := make([]byte, 64)
-		n, err := os.Stdin.Read(buf)
-		if err == nil && n > 0 {
-			// Check if response contains Sixel capability
-			// Look for ";4;" or ";4c" in the response
-			response := string(buf[:n])
-			responseChan <- (strings.Contains(response, ";4;") || strings.Contains(response, ";4c"))
-		} else {
-			responseChan <- false
+	// Handle Sixel-specific options and palette optimization
+	// Only apply expensive processing if specifically requested
+	if opts.SixelOpts != nil {
+		// Use custom palette if provided
+		if opts.SixelOpts.CustomPalette != nil {
+			processed = r.applyCustomPalette(processed, opts.SixelOpts.CustomPalette)
+		} else if opts.SixelOpts.OptimizePalette {
+			// Apply median cut optimization
+			processed = r.applyOptimizedPalette(processed, opts.SixelOpts.Palette)
 		}
-	}()
-
-	// Wait for response with timeout
-	select {
-	case result := <-responseChan:
-		return result
-	case <-time.After(100 * time.Millisecond):
-		return false
+		// Skip additional dithering if we already applied palette optimization
 	}
-}
-
-// renderSixel converts an image to Sixel format and returns the escape sequence.
-func (ti *TermImg) renderSixel() (string, error) {
-	img := *ti.img
-
-	const (
-		fastColors    = 64
-		qualityColors = 256
-	)
-
-	// Determine if we should use fast or quality mode
-	// For now, we'll default to quality mode unless image is very large
-	bounds := img.Bounds()
-	pixelCount := bounds.Dx() * bounds.Dy()
-	useFastMode := pixelCount > 1920*1080 // Use fast mode for >FHD images
-
-	var outputImg image.Image = img
-
-	if !useFastMode {
-		// Apply Stucki dithering for better quality
-		// First, we need to create a palette
-		// Generate an optimized palette from the image using median cut
-		quantizer := median.Quantizer(qualityColors)
-		quantPalette := quantizer.Palette(img)
-
-		// Convert to color.Palette for the ditherer
-		palette := quantPalette.ColorPalette()
-
-		// Create a new ditherer with the generated palette
-		d := dither.NewDitherer(palette)
-		d.Matrix = dither.Stucki
-
-		// Apply dithering
-		outputImg = d.Dither(img)
+	
+	// Only apply dithering if no palette optimization was done
+	if opts.Dither && (opts.SixelOpts == nil || (!opts.SixelOpts.OptimizePalette && opts.SixelOpts.CustomPalette == nil)) {
+		processed = r.applySixelDithering(processed, opts.DitherMode)
 	}
 
-	// Use go-sixel to encode the image
+	// Create a buffer to capture the sixel output
 	var buf bytes.Buffer
-	encoder := sixel.NewEncoder(&buf)
 
-	if useFastMode {
-		encoder.Dither = false
-		encoder.Colors = fastColors
-	} else {
-		// We already dithered with Stucki, so disable go-sixel's Floyd-Steinberg
-		encoder.Dither = false
-		encoder.Colors = qualityColors
+	// Create sixel encoder with enhanced configuration
+	enc := sixel.NewEncoder(&buf)
+
+	// Configure the encoder based on options
+	if opts.SixelOpts != nil {
+		// Set palette size with validation
+		if opts.SixelOpts.Palette > 0 {
+			// Validate palette size (typical sixel range: 2-256)
+			paletteSize := opts.SixelOpts.Palette
+			if paletteSize > 256 {
+				paletteSize = 256
+			} else if paletteSize < 2 {
+				paletteSize = 2
+			}
+			enc.Colors = paletteSize
+		}
+
+		// Configure dithering - disable if we already applied our own
+		if opts.SixelOpts.CustomPalette != nil || opts.SixelOpts.OptimizePalette {
+			enc.Dither = false // We've already applied optimized dithering
+		}
 	}
 
-	// Set dimensions if needed
-	if ti.Width > 0 {
-		encoder.Width = int(ti.Width)
+	// Set dimensions if specified in render options
+	if opts.Width > 0 {
+		// Convert character cells to approximate pixels for encoder
+		fontW, _ := getTerminalFontSize()
+		enc.Width = opts.Width * fontW
 	}
-	if ti.Height > 0 {
-		encoder.Height = int(ti.Height)
+	if opts.Height > 0 {
+		// Convert character cells to approximate pixels for encoder
+		_, fontH := getTerminalFontSize()
+		enc.Height = opts.Height * fontH
 	}
 
-	// Encode the image
-	if err := encoder.Encode(outputImg); err != nil {
+	// Encode the image to sixel format with enhanced error handling
+	if err := enc.Encode(processed); err != nil {
 		return "", fmt.Errorf("failed to encode sixel: %w", err)
 	}
 
-	return buf.String(), nil
+	// Validate the encoded output
+	if buf.Len() == 0 {
+		return "", fmt.Errorf("sixel encoding produced empty output")
+	}
+
+	// Get the sixel data
+	sixelData := buf.String()
+
+	// Wrap in proper sixel escape sequences
+	output := fmt.Sprintf("\x1bPq%s\x1b\\", sixelData)
+
+	// Track dimensions for precise clearing
+	// Estimate character height based on image height and typical character metrics
+	if opts.Height > 0 {
+		r.lastHeight = opts.Height
+	} else {
+		// Estimate based on processed image dimensions
+		bounds := processed.Bounds()
+		// Rough estimate: 1 character line ≈ 16 pixels
+		r.lastHeight = max(bounds.Dy()/16, 1)
+	}
+
+	// Handle terminal multiplexers
+	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
+		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
+	}
+
+	return output, nil
 }
 
-func (ti *TermImg) printSixel() error {
-	out, err := ti.renderSixel()
+// Print outputs the image directly to stdout
+func (r *SixelRenderer) Print(img image.Image, opts RenderOptions) error {
+	output, err := r.Render(img, opts)
 	if err != nil {
 		return err
 	}
 
-	// For tmux, we need to wrap the sixel data in a passthrough sequence
-	if os.Getenv("TMUX") != "" {
-		// Tmux DCS passthrough: ESC Ptmux; ESC <sixel data> ESC \
-		out = fmt.Sprintf("\x1bPtmux;\x1b%s\x1b\\", out)
-	}
-
-	fmt.Print(out)
-	return nil
+	_, err = io.WriteString(os.Stdout, output)
+	return err
 }
 
-func (ti *TermImg) clearSixel() error {
-	// Clearing Sixel images requires overwriting the area with spaces
-	// or using terminal-specific clear sequences
+// Clear removes the image from the terminal
+func (r *SixelRenderer) Clear(opts ClearOptions) error {
+	var clearSequence string
 
-	if ti.Height > 0 {
-		// Move cursor up
-		fmt.Printf("\x1b[%dA", int(ti.Height))
-
-		// Clear each line
-		for i := 0; i < int(ti.Height); i++ {
-			fmt.Print("\x1b[2K") // Clear entire line
-			if i < int(ti.Height)-1 {
-				fmt.Print("\x1b[B") // Move down one line
-			}
-		}
-
-		// Move cursor back to beginning of line
-		fmt.Print("\r")
+	// Determine clear mode
+	if opts.All {
+		// Always clear entire screen when explicitly requested
+		clearSequence = "\x1b[H\x1b[2J"
+	} else if r.lastHeight > 0 {
+		// Use precise clearing if we have dimensions
+		clearSequence = r.buildPreciseClearSequence(r.lastHeight)
 	} else {
-		// just print some newlines to move past the image
-		fmt.Print("\n\n")
+		// Fallback to screen clear if no dimensions available
+		clearSequence = "\x1b[H\x1b[2J"
+	}
+
+	// Handle terminal multiplexers
+	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
+		clearSequence = "\x1bPtmux;\x1b" + strings.ReplaceAll(clearSequence, "\x1b", "\x1b\x1b") + "\x1b\\"
+	}
+
+	_, err := io.WriteString(os.Stdout, clearSequence)
+	if err != nil {
+		return fmt.Errorf("failed to clear sixel image: %w", err)
 	}
 
 	return nil
 }
+
+// buildPreciseClearSequence creates a sequence to clear exact image area
+func (r *SixelRenderer) buildPreciseClearSequence(height int) string {
+	var result strings.Builder
+
+	// Move cursor up to beginning of image
+	if height > 0 {
+		result.WriteString(fmt.Sprintf("\x1b[%dA", height))
+	}
+
+	// Clear each line of the image
+	for i := 0; i < height; i++ {
+		result.WriteString("\x1b[2K") // Clear entire line
+		if i < height-1 {
+			result.WriteString("\x1b[B") // Move down one line
+		}
+	}
+
+	// Move cursor back to beginning of line
+	result.WriteString("\r")
+
+	return result.String()
+}
+
+// applyOptimizedPalette applies median cut quantization for optimal palette
+func (r *SixelRenderer) applyOptimizedPalette(img image.Image, paletteSize int) image.Image {
+	// Default to 256 colors if not specified
+	if paletteSize <= 0 {
+		paletteSize = 256
+	}
+
+	// Generate optimized palette using median cut
+	quantizer := median.Quantizer(paletteSize)
+	quantPalette := quantizer.Palette(img)
+
+	// Convert to color.Palette for the ditherer
+	palette := quantPalette.ColorPalette()
+
+	// Create ditherer with optimized palette
+	ditherer := dither.NewDitherer(palette)
+	ditherer.Matrix = dither.Stucki // Use Stucki for quality
+
+	return ditherer.Dither(img)
+}
+
+// applyCustomPalette applies a user-provided custom palette
+func (r *SixelRenderer) applyCustomPalette(img image.Image, palette color.Palette) image.Image {
+	if len(palette) == 0 {
+		return img
+	}
+
+	// Create ditherer with custom palette
+	ditherer := dither.NewDitherer(palette)
+	ditherer.Matrix = dither.Stucki // Use Stucki for quality
+
+	return ditherer.Dither(img)
+}
+
+// applySixelDithering applies dithering optimized for sixel output
+func (r *SixelRenderer) applySixelDithering(img image.Image, mode DitherMode) image.Image {
+	// Create a reduced color palette suitable for sixel
+	var palette color.Palette
+
+	switch mode {
+	case DitherStucki:
+		// Use a web-safe palette for better sixel compatibility
+		palette = createWebSafePalette()
+	case DitherFloydSteinberg:
+		// Use a simpler palette for Floyd-Steinberg
+		palette = createSimplePalette()
+	default:
+		return img
+	}
+
+	// Apply dithering
+	var ditherer *dither.Ditherer
+	switch mode {
+	case DitherStucki:
+		ditherer = dither.NewDitherer(palette)
+		ditherer.Matrix = dither.Stucki
+	case DitherFloydSteinberg:
+		ditherer = dither.NewDitherer(palette)
+		ditherer.Matrix = dither.FloydSteinberg
+	default:
+		return img
+	}
+
+	return ditherer.Dither(img)
+}
+

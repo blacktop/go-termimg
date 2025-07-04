@@ -1,53 +1,72 @@
 /*
 Package termimg provides functionality to render images in terminal emulators
-that support inline image protocols, specifically the iTerm2 Inline Images Protocol
-and the Kitty Terminal Graphics Protocol.
+that support various image protocols including Kitty, Sixel, iTerm2, and fallback
+Unicode halfblocks.
 
 This package automatically detects which protocol is supported by the current
-terminal and renders images accordingly. It supports PNG, JPEG, and WebP image formats.
+terminal and renders images accordingly. It supports all image formats that Go's
+standard image package supports (PNG, JPEG, GIF, etc.).
 
 Main features:
 
   - Automatic detection of supported terminal image protocols
-  - Support for iTerm2 and Kitty image protocols
-  - Rendering of PNG, JPEG, and WebP images
-  - Simple API for rendering images in the terminal
+  - Support for Kitty, Sixel, iTerm2, and Unicode halfblock protocols
+  - Fluent API for easy configuration
+  - Advanced features like scaling, dithering, z-index, virtual images
+  - TUI framework integration (Bubbletea)
+  - High performance with protocol-specific optimizations
 
-Usage:
+Basic Usage:
 
-To use this package, simply call the RenderImage function with the path to your image:
-
-	ti, err := termimg.Open("path/to/your/image.png")
+	// Simple one-liner
+	termimg.PrintFile("image.png")
+	
+	// With configuration
+	img, err := termimg.Open("image.png")
 	if err != nil {
 	    log.Fatal(err)
 	}
-	defer ti.Close()
-
-	if err := ti.Print(); err != nil {
+	
+	err = img.Width(80).Height(40).Print()
+	if err != nil {
 	    log.Fatal(err)
 	}
 
-The package will automatically detect the supported protocol and render the image
-using the appropriate method.
+Fluent API:
 
-Note that this package requires a terminal that supports either the iTerm2 Inline
-Images Protocol or the Kitty Terminal Graphics Protocol. If neither protocol is
-supported, an error will be returned.
+	// Chain configuration methods
+	rendered, err := termimg.Open("image.png").
+	    Width(100).
+	    Height(50).
+	    Scale(termimg.ScaleFit).
+	    Protocol(termimg.Kitty).
+	    Virtual(true).
+	    ZIndex(5).
+	    Render()
 
-For more advanced usage, you can also use the DetectProtocol function to check
-which protocol is supported:
+Protocol Detection:
 
 	protocol := termimg.DetectProtocol()
 	switch protocol {
+	case termimg.Kitty:
+	    fmt.Println("Kitty graphics protocol supported")
+	case termimg.Sixel:
+	    fmt.Println("Sixel protocol supported")
 	case termimg.ITerm2:
 	    fmt.Println("iTerm2 protocol supported")
-	case termimg.Kitty:
-	    fmt.Println("Kitty protocol supported")
+	case termimg.Halfblocks:
+	    fmt.Println("Unicode halfblocks fallback")
 	default:
 	    fmt.Println("No supported protocol detected")
 	}
 
-This package is designed to make it easy to add image rendering capabilities to
-terminal-based Go applications.
+TUI Integration:
+
+	widget := termimg.NewImageWidget(termimg.New(img))
+	widget.SetSize(50, 25).SetProtocol(termimg.Auto)
+	rendered, _ := widget.Render()
+
+This package is designed to make it easy to add modern image rendering capabilities
+to terminal-based Go applications with support for the latest terminal features.
 */
 package termimg

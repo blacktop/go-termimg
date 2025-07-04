@@ -1,283 +1,419 @@
 package termimg
 
 import (
-	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/gif"
-	"image/jpeg"
 	_ "image/jpeg"
-	"image/png"
 	_ "image/png"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/nfnt/resize"
 )
 
-const ESC_ERASE_DISPLAY = "\x1b[2J\x1b[0;0H"
+const CHUNK_SIZE = 4096 // 4KB
 
-var supportedFormats = []string{"png", "jpeg", "webp"}
-var (
-	ESCAPE = ""
-	START  = ""
-	CLOSE  = ""
+// Image represents a terminal image with a fluent API for configuration
+type Image struct {
+	source image.Image
+	reader io.Reader
+	path   string
+
+	// Configuration
+	width           int
+	height          int
+	protocol        Protocol
+	scaleMode       ScaleMode
+	zIndex          int
+	virtual         bool
+	dither          bool
+	ditherMode      DitherMode
+	optimizePalette bool
+
+	// Cached renderer
+	renderer Renderer
+}
+
+// ScaleMode defines how images should be scaled
+type ScaleMode int
+
+const (
+	// ScaleNone performs no scaling
+	ScaleNone ScaleMode = iota
+	// ScaleFit fits the image within bounds while maintaining aspect ratio
+	ScaleFit
+	// ScaleFill fills the bounds, potentially cropping the image
+	ScaleFill
+	// ScaleStretch stretches the image to fill bounds exactly
+	ScaleStretch
 )
 
-func init() {
-	if os.Getenv("TERM_PROGRAM") == "screen" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		tmuxPassthrough()
-		ESCAPE = "\x1b\x1b\\"
-		START = "\x1bPtmux;\x1b\x1b"
-		CLOSE = "\x1b\\"
-	} else {
-		ESCAPE = "\x1b\\"
-		START = "\x1b"
-		CLOSE = ""
-	}
+// DitherMode defines dithering algorithms for color reduction
+type DitherMode int
+
+const (
+	// DitherNone performs no dithering
+	DitherNone DitherMode = iota
+	// DitherStucki uses Stucki dithering algorithm
+	DitherStucki
+	// DitherFloydSteinberg uses Floyd-Steinberg dithering
+	DitherFloydSteinberg
+)
+
+// Renderer is the interface that all protocol implementations must satisfy
+type Renderer interface {
+	// Render generates the escape sequence for displaying the image
+	Render(img image.Image, opts RenderOptions) (string, error)
+
+	// Print outputs the image directly to stdout
+	Print(img image.Image, opts RenderOptions) error
+
+	// Clear removes the image from the terminal
+	Clear(opts ClearOptions) error
+
+	// Protocol returns the protocol type
+	Protocol() Protocol
 }
 
-type TermImg struct {
-	path         string
-	protocol     Protocol
-	img          *image.Image
-	format       string
-	size         int
-	Width        int
-	Height       int
-	origWidth    int
-	origHeight   int
-	closer       io.Closer
-	resizeWidth  uint
-	resizeHeight uint
-	zIndex       int
-	kittyID      string
+// RenderOptions contains all options for rendering an image
+type RenderOptions struct {
+	Width      int
+	Height     int
+	ScaleMode  ScaleMode
+	ZIndex     int
+	Virtual    bool
+	Dither     bool
+	DitherMode DitherMode
+
+	// Protocol-specific options
+	KittyOpts  *KittyOptions
+	SixelOpts  *SixelOptions
+	ITerm2Opts *ITerm2Options
 }
 
-func Open(imagePath string) (*TermImg, error) {
-	var err error
-
-	protocol := DetectProtocol()
-	if protocol == Unsupported {
-		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", SupportedProtocols())
-	}
-
-	imagePath, err = filepath.Abs(imagePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path for image: %s", err)
-	}
-
-	f, err := os.Open(imagePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open image: %s", err)
-	}
-
-	img, format, err := image.Decode(f)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode image: %s", err)
-	}
-
-	switch format {
-	case "png":
-	case "jpeg":
-	case "webp":
-	default:
-		return nil, fmt.Errorf("unsupported image format: %s; supported formats: (%s)", format, strings.Join(supportedFormats, ", "))
-	}
-
-	return &TermImg{
-		path:       imagePath,
-		protocol:   protocol,
-		img:        &img,
-		format:     format,
-		closer:     f,
-		Width:      img.Bounds().Dx(),
-		Height:     img.Bounds().Dy(),
-		origWidth:  img.Bounds().Dx(),
-		origHeight: img.Bounds().Dy(),
-	}, nil
+// ClearOptions contains options for clearing an image
+type ClearOptions struct {
+	ImageID string
+	All     bool
 }
 
-func (t *TermImg) Info() string {
-	if t.resizeWidth > 0 || t.resizeHeight > 0 {
-		return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d (resized from %dx%d)", t.protocol, t.format, t.Width, t.Height, t.origWidth, t.origHeight)
-	}
-	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, t.Width, t.Height)
+// KittyOptions contains Kitty-specific rendering options
+type KittyOptions struct {
+	ImageID      string
+	Placement    string
+	UseUnicode   bool
+	Animation    *AnimationOptions
+	Position     *PositionOptions
+	FileTransfer bool
 }
 
-func (t *TermImg) Close() error {
-	if t.closer == nil {
+// AnimationOptions contains parameters for Kitty image animation
+type AnimationOptions struct {
+	DelayMs  int      // Delay between frames in milliseconds
+	Loops    int      // Number of animation loops (0 = infinite)
+	ImageIDs []string // List of image IDs to animate between
+}
+
+// PositionOptions contains parameters for precise image positioning
+type PositionOptions struct {
+	X      int // X coordinate in character cells
+	Y      int // Y coordinate in character cells
+	ZIndex int // Z-index for layering
+}
+
+// SixelClearMode defines how sixel images should be cleared
+type SixelClearMode int
+
+const (
+	// SixelClearScreen clears the entire screen
+	SixelClearScreen SixelClearMode = iota
+	// SixelClearPrecise clears only the exact image area
+	SixelClearPrecise
+)
+
+// SixelOptions contains Sixel-specific rendering options
+type SixelOptions struct {
+	Palette         int            // Number of colors in palette
+	Background      string         // Background color
+	CustomPalette   color.Palette  // Custom color palette
+	ClearMode       SixelClearMode // How to clear images
+	OptimizePalette bool           // Use median cut optimization
+}
+
+// ITerm2Options contains iTerm2-specific rendering options
+type ITerm2Options struct {
+	PreserveAspectRatio bool
+	Inline              bool
+}
+
+// New creates a new Image from an image.Image
+func New(img image.Image) *Image {
+	if img == nil {
 		return nil
 	}
-	return t.closer.Close()
+	return &Image{
+		source:    img,
+		protocol:  Auto,
+		scaleMode: ScaleFit,
+	}
 }
 
-func NewTermImg(r io.Reader) (*TermImg, error) {
-	protocol := DetectProtocol()
-	if protocol == Unsupported {
-		return nil, fmt.Errorf("no supported image protocol detected, supported protocols: %s", SupportedProtocols())
+// Open creates a new Image from a file path
+func Open(path string) (*Image, error) {
+	if path == "" {
+		return nil, fmt.Errorf("path cannot be empty")
 	}
-
-	img, format, err := image.Decode(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode image: %s", err)
-	}
-
-	switch format {
-	case "png":
-	case "jpeg":
-	case "webp":
-	default:
-		return nil, fmt.Errorf("unsupported image format: %s; supported formats: (%s)", format, strings.Join(supportedFormats, ", "))
-	}
-
-	return &TermImg{
-		protocol:   protocol,
-		img:        &img,
-		format:     format,
-		Width:      img.Bounds().Dx(),
-		Height:     img.Bounds().Dy(),
-		origWidth:  img.Bounds().Dx(),
-		origHeight: img.Bounds().Dy(),
+	return &Image{
+		path:      path,
+		protocol:  Auto,
+		scaleMode: ScaleFit,
 	}, nil
 }
 
-func (t *TermImg) KittyOpts(zIndex int) {
-	t.zIndex = zIndex
-}
-
-func (t *TermImg) Resize(width, height uint) {
-	t.resizeWidth = width
-	t.resizeHeight = height
-	resizedImg := resize.Resize(width, height, *t.img, resize.Lanczos3)
-	t.img = &resizedImg
-	t.Width = resizedImg.Bounds().Dx()
-	t.Height = resizedImg.Bounds().Dy()
-}
-
-func (ti *TermImg) Render() (string, error) {
-	var lastErr error
-	tried := map[Protocol]bool{}
-
-	// Ensure we have a starting protocol
-	if ti.protocol == Unsupported {
-		ti.protocol = DetectProtocol()
+// From creates a new Image from an io.Reader
+func From(r io.Reader) *Image {
+	if r == nil {
+		return nil
 	}
-
-	for {
-		if tried[ti.protocol] {
-			return "", lastErr
-		}
-		tried[ti.protocol] = true
-
-		var out string
-		switch ti.protocol {
-		case ITerm2:
-			out, lastErr = ti.renderITerm2()
-		case Kitty:
-			out, lastErr = ti.renderKitty()
-		case Sixel:
-			out, lastErr = ti.renderSixel()
-		default:
-			lastErr = fmt.Errorf("unsupported protocol")
-		}
-
-		if lastErr == nil {
-			return out, nil
-		}
-
-		// pick next candidate
-		for _, p := range DetermineProtocols() {
-			if !tried[p] {
-				ti.protocol = p
-				break
-			}
-		}
+	return &Image{
+		reader:    r,
+		protocol:  Auto,
+		scaleMode: ScaleFit,
 	}
 }
 
-func (ti *TermImg) Print() error {
-	tried := map[Protocol]bool{}
-	if ti.protocol == Unsupported {
-		ti.protocol = DetectProtocol()
+// Width sets the target width in character cells
+func (i *Image) Width(w int) *Image {
+	if w < 0 {
+		w = 0
+	}
+	i.width = w
+	return i
+}
+
+// Height sets the target height in character cells
+func (i *Image) Height(h int) *Image {
+	if h < 0 {
+		h = 0
+	}
+	i.height = h
+	return i
+}
+
+// Size sets both width and height in character cells
+func (i *Image) Size(w, h int) *Image {
+	if w < 0 {
+		w = 0
+	}
+	if h < 0 {
+		h = 0
+	}
+	i.width = w
+	i.height = h
+	return i
+}
+
+// Protocol sets the rendering protocol to use
+func (i *Image) Protocol(p Protocol) *Image {
+	i.protocol = p
+	i.renderer = nil // Clear cached renderer
+	return i
+}
+
+// Scale sets the scaling mode
+func (i *Image) Scale(mode ScaleMode) *Image {
+	i.scaleMode = mode
+	return i
+}
+
+// ZIndex sets the z-index for protocols that support layering
+func (i *Image) ZIndex(z int) *Image {
+	i.zIndex = z
+	return i
+}
+
+// Virtual enables virtual image mode (for Kitty protocol)
+func (i *Image) Virtual(v bool) *Image {
+	i.virtual = v
+	return i
+}
+
+// Dither enables dithering with the default algorithm
+func (i *Image) Dither(d bool) *Image {
+	i.dither = d
+	if d && i.ditherMode == DitherNone {
+		i.ditherMode = DitherStucki
+	}
+	return i
+}
+
+// DitherMode sets the dithering algorithm
+func (i *Image) DitherMode(mode DitherMode) *Image {
+	i.ditherMode = mode
+	i.dither = mode != DitherNone
+	return i
+}
+
+// OptimizePalette enables/disables palette optimization (Sixel only)
+func (i *Image) OptimizePalette(optimize bool) *Image {
+	i.optimizePalette = optimize
+	return i
+}
+
+// Render generates the escape sequence string for the image
+func (i *Image) Render() (string, error) {
+	img, err := i.loadImage()
+	if err != nil {
+		return "", err
 	}
 
-	var lastErr error
-	for {
-		if tried[ti.protocol] {
-			return lastErr
-		}
-		tried[ti.protocol] = true
-
-		switch ti.protocol {
-		case ITerm2:
-			lastErr = ti.printITerm2()
-		case Kitty:
-			lastErr = ti.printKitty()
-		case Sixel:
-			lastErr = ti.printSixel()
-		default:
-			lastErr = fmt.Errorf("unsupported protocol")
-		}
-
-		if lastErr == nil {
-			return nil
-		}
-
-		// pick next protocol
-		next := Unsupported
-		for _, p := range DetermineProtocols() {
-			if !tried[p] {
-				next = p
-				break
-			}
-		}
-		if next == Unsupported {
-			return lastErr
-		}
-		ti.protocol = next
+	renderer, err := i.getRenderer()
+	if err != nil {
+		return "", err
 	}
+
+	opts := i.buildRenderOptions()
+	return renderer.Render(img, opts)
 }
 
-func (ti *TermImg) Clear() error {
-	switch ti.protocol {
-	case ITerm2:
-		return ti.clearITerm2()
-	case Kitty:
-		return ti.clearKitty()
-	case Sixel:
-		return ti.clearSixel()
-	default:
-		return fmt.Errorf("unsupported protocol")
+// Print outputs the image to stdout
+func (i *Image) Print() error {
+	img, err := i.loadImage()
+	if err != nil {
+		return err
 	}
-}
 
-func (ti *TermImg) AsPNGBytes() ([]byte, error) {
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, *ti.img); err != nil {
-		return nil, fmt.Errorf("failed to encode image as PNG: %s", err)
+	renderer, err := i.getRenderer()
+	if err != nil {
+		return err
 	}
-	return buf.Bytes(), nil
+
+	opts := i.buildRenderOptions()
+	return renderer.Print(img, opts)
 }
 
-func (ti *TermImg) AsJPEGBytes() ([]byte, error) {
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, *ti.img, nil); err != nil {
-		return nil, fmt.Errorf("failed to encode image as JPEG: %s", err)
+// Clear removes the image from the terminal
+func (i *Image) Clear() error {
+	renderer, err := i.getRenderer()
+	if err != nil {
+		return err
 	}
-	return buf.Bytes(), nil
+
+	return renderer.Clear(ClearOptions{})
 }
 
-func (ti *TermImg) MoveCursorToBeginningOfLine() {
-	fmt.Print("\r")
+// loadImage loads the image from the configured source
+func (i *Image) loadImage() (image.Image, error) {
+	if i.source != nil {
+		return i.source, nil
+	}
+
+	if i.path != "" {
+		file, err := os.Open(i.path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file: %w", err)
+		}
+		defer file.Close()
+
+		img, _, err := image.Decode(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode image: %w", err)
+		}
+
+		i.source = img
+		return img, nil
+	}
+
+	if i.reader != nil {
+		img, _, err := image.Decode(i.reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode image: %w", err)
+		}
+
+		i.source = img
+		return img, nil
+	}
+
+	return nil, fmt.Errorf("no image source configured")
 }
 
-func (ti *TermImg) MoveCursorUpAndToBeginning(lines int) {
-	fmt.Printf("\x1b[%dA", lines)
+// getRenderer returns the appropriate renderer for the configured protocol
+func (i *Image) getRenderer() (Renderer, error) {
+	if i.renderer != nil {
+		return i.renderer, nil
+	}
+
+	renderer, err := GetRenderer(i.protocol)
+	if err != nil {
+		return nil, err
+	}
+
+	i.renderer = renderer
+	return renderer, nil
 }
 
-func (ti *TermImg) SetProtocol(p Protocol) {
-	ti.protocol = p
+// buildRenderOptions creates RenderOptions from the Image configuration
+func (i *Image) buildRenderOptions() RenderOptions {
+	opts := RenderOptions{
+		Width:      i.width,
+		Height:     i.height,
+		ScaleMode:  i.scaleMode,
+		ZIndex:     i.zIndex,
+		Virtual:    i.virtual,
+		Dither:     i.dither,
+		DitherMode: i.ditherMode,
+	}
+
+	// Initialize SixelOptions with defaults for Sixel protocol
+	if i.protocol == Sixel {
+		opts.SixelOpts = &SixelOptions{
+			Palette:         256,               // Default to 256 colors
+			ClearMode:       SixelClearPrecise, // Default to precise clearing
+			OptimizePalette: i.optimizePalette, // Use user setting
+		}
+	}
+
+	return opts
+}
+
+// Convenience functions for quick rendering
+
+// Render renders an image with default settings
+func Render(img image.Image) (string, error) {
+	if img == nil {
+		return "", fmt.Errorf("image cannot be nil")
+	}
+	return New(img).Render()
+}
+
+// RenderFile renders an image file with default settings
+func RenderFile(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+	img, err := Open(path)
+	if err != nil {
+		return "", err
+	}
+	return img.Render()
+}
+
+// Print prints an image with default settings
+func Print(img image.Image) error {
+	if img == nil {
+		return fmt.Errorf("image cannot be nil")
+	}
+	return New(img).Print()
+}
+
+// PrintFile prints an image file with default settings
+func PrintFile(path string) error {
+	if path == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	img, err := Open(path)
+	if err != nil {
+		return err
+	}
+	return img.Print()
 }

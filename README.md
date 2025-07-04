@@ -5,7 +5,7 @@
   <img alt="Fallback logo" src="docs/logo-dark.png" height="400">
 </picture>
 
-  <h4><p align="center">Go terminal image package</p></h4>
+  <h4><p align="center">Modern terminal image library for Go</p></h4>
   <p align="center">
     <a href="https://github.com/blacktop/go-termimg/actions" alt="Actions">
           <img src="https://github.com/blacktop/go-termimg/actions/workflows/go.yml/badge.svg" /></a>
@@ -14,58 +14,167 @@
     <a href="http://doge.mit-license.org" alt="LICENSE">
           <img src="https://img.shields.io/:license-mit-blue.svg" /></a>
 </p>
-<br>
+</p>
 
-## Supported
+## Features
 
-### Protocols
+**Universal Protocol Support**
+- 🐱 **Kitty** - Fast graphics with virtual images, z-index, Unicode placeholders
+- 🎨 **Sixel** - High-quality with palette optimization and dithering
+- 🍎 **iTerm2** - Native inline images
+- 🧱 **Halfblocks** - Unicode fallback (works everywhere)
 
-- **iTerm2** [Inline Images Protocol](https://iterm2.com/documentation-images.html)
-- **Kitty** [Terminal Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
-- **Sixel** [Sixel Image Protocol](https://en.wikipedia.org/wiki/Sixel)
+**Rich Image Processing**
+- Smart scaling (fit, fill, stretch, none)
+- Advanced dithering (Stucki, Floyd-Steinberg)
+- Quality vs speed control
+- TUI framework integration
 
-### Image Formats
+## Installation
 
-- [x] PNG
-- [x] JPEG
-- [ ] WEBP
-
-## Getting Started
-
-```
+```bash
 go get github.com/blacktop/go-termimg
 ```
 
-## Usage
+## Getting Started
+
+### Basic Usage
 
 ```go
-ti, err := termimg.Open("path/to/your/image.png")
-if err != nil {
-    log.Fatal(err)
+package main
+
+import "github.com/blacktop/go-termimg"
+
+func main() {
+    // Simple one-liner
+    termimg.PrintFile("image.png")
+    
+    // Or with control
+    img, _ := termimg.Open("image.png")
+    img.Width(50).Height(25).Print()
 }
-defer ti.Close()
-
-ti.Print()
 ```
 
-### `imgcat` demo tool
+### API
 
-Install
-
+```go
+// Auto-detect best protocol and render
+rendered, err := termimg.Open("image.png").
+    Width(80).
+    Height(40).
+    Scale(termimg.ScaleFit).
+    Render()
 ```
+
+### Protocol-Specific Features
+
+```go
+// Kitty with virtual images and z-index
+termimg.Open("overlay.png").
+    Protocol(termimg.Kitty).
+    Virtual(true).
+    ZIndex(5).
+    Print()
+
+// Sixel with quality optimization
+termimg.Open("photo.jpg").
+    Protocol(termimg.Sixel).
+    OptimizePalette(true).
+    DitherMode(termimg.DitherStucki).
+    Print()
+```
+
+### TUI Integration
+
+```go
+import tea "github.com/charmbracelet/bubbletea"
+
+type model struct {
+    widget *termimg.ImageWidget
+}
+
+func (m model) View() string {
+    rendered, _ := m.widget.Render()
+    return rendered
+}
+
+func main() {
+    img := termimg.NewImageWidgetFromFile("image.png")
+    img.SetSize(50, 25).SetProtocol(termimg.Auto)
+    
+    p := tea.NewProgram(model{widget: img})
+    p.Run()
+}
+```
+
+## 🛠️ Command Line Tools
+
+Install `imgcat` demo tool
+
+```bash
 go install github.com/blacktop/go-termimg/cmd/imgcat@latest
 ```
 
-Usage
+### imgcat - Terminal Image Viewer
 
+```bash
+# Basic usage
+imgcat image.png
+
+# With specific protocol and size
+imgcat -w 100 -H 50 --protocol kitty image.png
+
+# Try different demos
+imgcat --demo showcase  # Comprehensive feature demo
+imgcat --demo animation # Animation cycling
+imgcat --demo placement # Virtual image placement
 ```
-imgcat path/to/your/image.png
+
+Install `imgcat` demo tool
+
+```bash
+go install github.com/blacktop/go-termimg/cmd/imgcat@latest
 ```
 
-## TODO
+### tui-gallery - Interactive TUI Demo
 
-- [ ] [unicode placeholders](https://github.com/benjajaja/ratatui-image/blob/afbdd4e79251ef0709e4a2d9281b3ac6eb73291a/src/protocol/kitty.rs#L183C8-L183C19)
-- [ ] [RequestTermAttributes](https://github.com/BourgeoisBear/rasterm/blob/89c5ed90c4401bb687adb4a2cc0a41dacc4c5475/term_misc.go#L163C6-L163C27)
+```bash
+tui-gallery
+```
+
+Interactive gallery with:
+- Protocol switching (1-5 keys)
+- Feature controls (v, z, d, s keys)
+- Real-time settings display (f key)
+- Detailed help (? key)
+
+## 📋 Supported Formats
+
+- ✅ PNG, JPEG, GIF
+- ✅ Any format supported by Go's `image` package
+- 🔄 WebP support planned
+
+## 🎯 Protocol Detection
+
+```go
+// Auto-detect best available protocol
+protocol := termimg.DetectProtocol()
+
+// Check specific protocol support
+if termimg.KittySupported() {
+    // Use Kitty features
+}
+
+// List all available protocols
+protocols := termimg.DetermineProtocols()
+```
+
+## ⚡ Performance
+
+- **Halfblocks**: 792µs (fastest)
+- **Kitty**: 2.57ms (efficient) 
+- **iTerm2**: 2.53ms (fast)
+- **Sixel**: 92ms (high quality)
 
 ## License
 
