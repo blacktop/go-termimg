@@ -8,8 +8,9 @@
 
 ### Protocols
 
-- [x] **iTerm2** [Inline Images Protocol](https://iterm2.com/documentation-images.html)
-- [x] **Kitty** [Terminal Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+- **iTerm2** [Inline Images Protocol](https://iterm2.com/documentation-images.html)
+- **Kitty** [Terminal Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+- **Sixel** [Sixel Image Protocol](https://en.wikipedia.org/wiki/Sixel)
 
 ### Image Formats
 
@@ -52,7 +53,6 @@ imgcat path/to/your/image.png
 ## TODO
 
 - [ ] [unicode placeholders](https://github.com/benjajaja/ratatui-image/blob/afbdd4e79251ef0709e4a2d9281b3ac6eb73291a/src/protocol/kitty.rs#L183C8-L183C19)
-- [ ] [sixel support](https://github.com/BourgeoisBear/rasterm/blob/main/sixel.go)
 - [ ] [RequestTermAttributes](https://github.com/BourgeoisBear/rasterm/blob/89c5ed90c4401bb687adb4a2cc0a41dacc4c5475/term_misc.go#L163C6-L163C27)
 
 ## License

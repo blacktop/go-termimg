@@ -26,3 +26,9 @@ go.work.sum
 
 # misc
 test/
+cmd/imgcat/imgcat
+
+# AI
+.claude/
+CLAUDE.md
+GEMINI.md

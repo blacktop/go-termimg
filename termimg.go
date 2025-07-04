@@ -45,13 +45,15 @@ type TermImg struct {
 	img          *image.Image
 	format       string
 	size         int
-	width        int
-	height       int
+	Width        int
+	Height       int
 	origWidth    int
 	origHeight   int
 	closer       io.Closer
 	resizeWidth  uint
 	resizeHeight uint
+	zIndex       int
+	kittyID      string
 }
 
 func Open(imagePath string) (*TermImg, error) {
@@ -91,8 +93,8 @@ func Open(imagePath string) (*TermImg, error) {
 		img:        &img,
 		format:     format,
 		closer:     f,
-		width:      img.Bounds().Dx(),
-		height:     img.Bounds().Dy(),
+		Width:      img.Bounds().Dx(),
+		Height:     img.Bounds().Dy(),
 		origWidth:  img.Bounds().Dx(),
 		origHeight: img.Bounds().Dy(),
 	}, nil
@@ -100,9 +102,9 @@ func Open(imagePath string) (*TermImg, error) {
 
 func (t *TermImg) Info() string {
 	if t.resizeWidth > 0 || t.resizeHeight > 0 {
-		return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d (resized from %dx%d)", t.protocol, t.format, t.width, t.height, t.origWidth, t.origHeight)
+		return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d (resized from %dx%d)", t.protocol, t.format, t.Width, t.Height, t.origWidth, t.origHeight)
 	}
-	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, t.width, t.height)
+	return fmt.Sprintf("protocol: %s, format: %s, size: %dx%d", t.protocol, t.format, t.Width, t.Height)
 }
 
 func (t *TermImg) Close() error {
@@ -135,11 +137,15 @@ func NewTermImg(r io.Reader) (*TermImg, error) {
 		protocol:   protocol,
 		img:        &img,
 		format:     format,
-		width:      img.Bounds().Dx(),
-		height:     img.Bounds().Dy(),
+		Width:      img.Bounds().Dx(),
+		Height:     img.Bounds().Dy(),
 		origWidth:  img.Bounds().Dx(),
 		origHeight: img.Bounds().Dy(),
 	}, nil
+}
+
+func (t *TermImg) KittyOpts(zIndex int) {
+	t.zIndex = zIndex
 }
 
 func (t *TermImg) Resize(width, height uint) {
@@ -147,31 +153,91 @@ func (t *TermImg) Resize(width, height uint) {
 	t.resizeHeight = height
 	resizedImg := resize.Resize(width, height, *t.img, resize.Lanczos3)
 	t.img = &resizedImg
-	t.width = resizedImg.Bounds().Dx()
-	t.height = resizedImg.Bounds().Dy()
+	t.Width = resizedImg.Bounds().Dx()
+	t.Height = resizedImg.Bounds().Dy()
 }
 
 func (ti *TermImg) Render() (string, error) {
-	// Render the image based on the detected protocol
-	switch ti.protocol {
-	case ITerm2:
-		return ti.renderITerm2()
-	case Kitty:
-		return ti.renderKitty()
-	default:
-		return "", fmt.Errorf("unsupported protocol")
+	var lastErr error
+	tried := map[Protocol]bool{}
+
+	// Ensure we have a starting protocol
+	if ti.protocol == Unsupported {
+		ti.protocol = DetectProtocol()
+	}
+
+	for {
+		if tried[ti.protocol] {
+			return "", lastErr
+		}
+		tried[ti.protocol] = true
+
+		var out string
+		switch ti.protocol {
+		case ITerm2:
+			out, lastErr = ti.renderITerm2()
+		case Kitty:
+			out, lastErr = ti.renderKitty()
+		case Sixel:
+			out, lastErr = ti.renderSixel()
+		default:
+			lastErr = fmt.Errorf("unsupported protocol")
+		}
+
+		if lastErr == nil {
+			return out, nil
+		}
+
+		// pick next candidate
+		for _, p := range DetermineProtocols() {
+			if !tried[p] {
+				ti.protocol = p
+				break
+			}
+		}
 	}
 }
 
 func (ti *TermImg) Print() error {
-	// Render the image based on the detected protocol
-	switch ti.protocol {
-	case ITerm2:
-		return ti.printITerm2()
-	case Kitty:
-		return ti.printKitty()
-	default:
-		return fmt.Errorf("unsupported protocol")
+	tried := map[Protocol]bool{}
+	if ti.protocol == Unsupported {
+		ti.protocol = DetectProtocol()
+	}
+
+	var lastErr error
+	for {
+		if tried[ti.protocol] {
+			return lastErr
+		}
+		tried[ti.protocol] = true
+
+		switch ti.protocol {
+		case ITerm2:
+			lastErr = ti.printITerm2()
+		case Kitty:
+			lastErr = ti.printKitty()
+		case Sixel:
+			lastErr = ti.printSixel()
+		default:
+			lastErr = fmt.Errorf("unsupported protocol")
+		}
+
+		if lastErr == nil {
+			return nil
+		}
+
+		// pick next protocol
+		next := Unsupported
+		for _, p := range DetermineProtocols() {
+			if !tried[p] {
+				next = p
+				break
+			}
+		}
+		if next == Unsupported {
+			return lastErr
+		}
+		ti.protocol = next
 	}
 }
 
@@ -181,6 +247,8 @@ func (ti *TermImg) Clear() error {
 		return ti.clearITerm2()
 	case Kitty:
 		return ti.clearKitty()
+	case Sixel:
+		return ti.clearSixel()
 	default:
 		return fmt.Errorf("unsupported protocol")
 	}
@@ -200,4 +268,16 @@ func (ti *TermImg) AsJPEGBytes() ([]byte, error) {
 		return nil, fmt.Errorf("failed to encode image as JPEG: %s", err)
 	}
 	return buf.Bytes(), nil
+}
+
+func (ti *TermImg) MoveCursorToBeginningOfLine() {
+	fmt.Print("\r")
+}
+
+func (ti *TermImg) MoveCursorUpAndToBeginning(lines int) {
+	fmt.Printf("\x1b[%dA", lines)
+}
+
+func (ti *TermImg) SetProtocol(p Protocol) {
+	ti.protocol = p
 }

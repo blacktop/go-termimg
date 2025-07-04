@@ -5,18 +5,76 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
+	"time"
+
+	"golang.org/x/term"
 )
 
+// checkITerm2Support performs iTerm2 detection
 func checkITerm2Support() bool {
-	// iTerm2 doesn't have a specific query mechanism, so we'll use a heuristic to check the env
+	// Check environment variables
+	termProgram := os.Getenv("TERM_PROGRAM")
+	lcTerminal := os.Getenv("LC_TERMINAL")
+
 	switch {
-	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
+	case termProgram == "iTerm.app":
 		return true
-	case os.Getenv("TERM_PROGRAM") == "vscode":
+	case termProgram == "vscode" && os.Getenv("TERM_PROGRAM_VERSION") != "":
+		return true
+	case termProgram == "WezTerm":
+		return true
+	case termProgram == "mintty":
+		return true
+	case termProgram == "rio":
+		return true
+	case termProgram == "WarpTerminal":
+		return true
+	case strings.Contains(strings.ToLower(lcTerminal), "iterm"):
 		return true
 	case os.Getenv("TERM") == "mintty":
 		return true
-	default:
+	}
+
+	// Try iTerm2-specific query if terminal is interactive
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return false
+	}
+
+	return checkITerm2Query()
+}
+
+// checkITerm2Query sends iTerm2-specific query
+func checkITerm2Query() bool {
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return false
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Send iTerm2 query
+	fmt.Print("\x1b[1337n")
+
+	// Set up a channel for timeout
+	responseChan := make(chan bool, 1)
+
+	go func() {
+		buf := make([]byte, 32)
+		n, err := os.Stdin.Read(buf)
+		if err == nil && n > 0 {
+			// Check if response contains iTerm2 signature
+			response := string(buf[:n])
+			responseChan <- strings.Contains(response, "1337")
+		} else {
+			responseChan <- false
+		}
+	}()
+
+	// Wait for response with timeout
+	select {
+	case result := <-responseChan:
+		return result
+	case <-time.After(100 * time.Millisecond):
 		return false
 	}
 }
@@ -36,8 +94,8 @@ func (ti *TermImg) renderITerm2() (string, error) {
 			if isfirt {
 				encoded = START + fmt.Sprintf("]1337;MultipartFile=inline=1;size=%d;width=%dpx;height=%dpx;doNotMoveCursor=1:%s\x07",
 					ti.size,
-					ti.width,
-					ti.height,
+					ti.Width,
+					ti.Height,
 					base64.StdEncoding.EncodeToString(chunk),
 				) + ESCAPE + CLOSE
 				isfirt = false
@@ -51,8 +109,8 @@ func (ti *TermImg) renderITerm2() (string, error) {
 	} else {
 		encoded = START + fmt.Sprintf("]1337;File=inline=1;size=%d;width=%dpx;height=%dpx;doNotMoveCursor=1:%s\x07",
 			ti.size,
-			ti.width,
-			ti.height,
+			ti.Width,
+			ti.Height,
 			base64.StdEncoding.EncodeToString(data),
 		) + ESCAPE + CLOSE
 	}
