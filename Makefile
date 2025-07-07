@@ -13,3 +13,31 @@ build:
 demo:
 	@echo "🚀 Running Demo"
 	go run ./cmd/demo/main.go
+
+PROTOCOL ?=
+
+.PHONY: debug
+debug:
+	@echo "🚀 Starting dlv debug server on :2345"
+	@echo "VSCode debugger can now attach to localhost:2345"
+	dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat-simple/main.go -- -protocol $(PROTOCOL) -clear -scale none -w 200 -H 151 ./test/image_smol.png
+
+.PHONY: debug-auto
+debug-auto: PROTOCOL := auto
+debug-auto: debug
+
+.PHONY: debug-kitty
+debug-kitty: PROTOCOL := kitty
+debug-kitty: debug
+
+.PHONY: debug-iterm
+debug-iterm: PROTOCOL := iterm
+debug-iterm: debug
+
+.PHONY: debug-sixel
+debug-sixel: PROTOCOL := sixel
+debug-sixel: debug
+
+.PHONY: debug-halfblocks
+debug-halfblocks: PROTOCOL := halfblocks
+debug-halfblocks: debug
