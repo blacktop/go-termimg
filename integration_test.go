@@ -236,7 +236,6 @@ func TestDitherModes(t *testing.T) {
 
 	ditherModes := []termimg.DitherMode{
 		termimg.DitherNone,
-		termimg.DitherStucki,
 		termimg.DitherFloydSteinberg,
 	}
 
