@@ -3,9 +3,11 @@ package termimg
 import (
 	"fmt"
 	"image"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/mosaic"
+	"golang.org/x/term"
 )
 
 // HalfblocksRenderer implements the Renderer interface using mosaic
@@ -21,23 +23,64 @@ func (r *HalfblocksRenderer) Protocol() Protocol {
 
 // Render generates the escape sequence for displaying the image
 func (r *HalfblocksRenderer) Render(img image.Image, opts RenderOptions) (string, error) {
-	// Process the image (resize, dither, etc.)
-	processed, err := processImage(img, opts)
-	if err != nil {
-		return "", fmt.Errorf("failed to process image: %w", err)
+	// For halfblocks, we don't use processImage because mosaic handles resizing
+	// We only apply dithering if requested
+	processed := img
+	if opts.Dither {
+		processed = ditherImage(img, opts.DitherMode)
 	}
 
 	// Create mosaic renderer
 	m := mosaic.New()
 
 	// Configure dimensions in character cells
-	if opts.Width > 0 {
-		m = m.Width(opts.Width)
-		r.lastWidth = opts.Width
+	// If no dimensions specified, auto-detect terminal size
+	adjustedWidth := opts.Width
+	adjustedHeight := opts.Height
+	
+	if adjustedWidth == 0 && adjustedHeight == 0 {
+		// Get terminal size for auto-fitting
+		if width, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			adjustedWidth = width
+			adjustedHeight = height
+		} else {
+			// Fallback to reasonable defaults if terminal size detection fails
+			adjustedWidth = 80
+			adjustedHeight = 24
+		}
 	}
-	if opts.Height > 0 {
-		m = m.Height(opts.Height)
-		r.lastHeight = opts.Height
+	
+	// For ScaleFit mode with both dimensions, we need to maintain aspect ratio
+	if opts.ScaleMode == ScaleFit && adjustedWidth > 0 && adjustedHeight > 0 {
+		bounds := img.Bounds()
+		srcW, srcH := float64(bounds.Dx()), float64(bounds.Dy())
+		
+		// For halfblocks, each character cell is roughly 1 unit wide and 2 units tall
+		// So we need to adjust the height calculation to account for this 1:2 ratio
+		// This means the effective "pixel" height is double the character height
+		effectiveHeight := float64(adjustedHeight) * 2.0
+		
+		// Calculate the scaling ratios
+		ratioW := float64(adjustedWidth) / srcW
+		ratioH := effectiveHeight / srcH
+		
+		// For ScaleFit, use the smaller ratio to fit within bounds
+		ratio := min(ratioW, ratioH)
+		
+		// Calculate the actual dimensions that maintain aspect ratio
+		adjustedWidth = int(srcW * ratio)
+		// Divide by 2 to convert back from effective pixels to character cells
+		adjustedHeight = int(srcH * ratio / 2.0)
+	}
+	
+	// Apply dimensions to mosaic
+	if adjustedWidth > 0 {
+		m = m.Width(adjustedWidth)
+		r.lastWidth = adjustedWidth
+	}
+	if adjustedHeight > 0 {
+		m = m.Height(adjustedHeight)
+		r.lastHeight = adjustedHeight
 	}
 
 	// Render using mosaic

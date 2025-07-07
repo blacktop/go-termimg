@@ -11,6 +11,13 @@ import (
 
 // KittySupported checks if the current terminal supports Kitty graphics protocol
 func KittySupported() bool {
+	// Special handling for tmux/screen - check outer terminal capabilities
+	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" ||
+		os.Getenv("TERM_PROGRAM") == "screen" {
+		// Use the same detection logic as DetermineProtocols for consistency
+		return detectOuterTerminalProtocol() == Kitty
+	}
+
 	// First try environment variables (fast path)
 	switch {
 	case os.Getenv("KITTY_WINDOW_ID") != "":

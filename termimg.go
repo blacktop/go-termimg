@@ -3,7 +3,6 @@ package termimg
 import (
 	"fmt"
 	"image"
-	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -11,7 +10,10 @@ import (
 	"os"
 )
 
-const CHUNK_SIZE = 4096 // 4KB
+const (
+	CHUNK_SIZE        = 4096               // 4KB
+	BASE64_CHUNK_SIZE = 3 * CHUNK_SIZE / 4 // Base64 encoding expands data size
+)
 
 // Image represents a terminal image with a fluent API for configuration
 type Image struct {
@@ -20,15 +22,14 @@ type Image struct {
 	path   string
 
 	// Configuration
-	width           int
-	height          int
-	protocol        Protocol
-	scaleMode       ScaleMode
-	zIndex          int
-	virtual         bool
-	dither          bool
-	ditherMode      DitherMode
-	optimizePalette bool
+	width      int
+	height     int
+	protocol   Protocol
+	scaleMode  ScaleMode
+	zIndex     int
+	virtual    bool
+	dither     bool
+	ditherMode DitherMode
 
 	// Cached renderer
 	renderer Renderer
@@ -54,8 +55,6 @@ type DitherMode int
 const (
 	// DitherNone performs no dithering
 	DitherNone DitherMode = iota
-	// DitherStucki uses Stucki dithering algorithm
-	DitherStucki
 	// DitherFloydSteinberg uses Floyd-Steinberg dithering
 	DitherFloydSteinberg
 )
@@ -95,55 +94,6 @@ type RenderOptions struct {
 type ClearOptions struct {
 	ImageID string
 	All     bool
-}
-
-// KittyOptions contains Kitty-specific rendering options
-type KittyOptions struct {
-	ImageID      string
-	Placement    string
-	UseUnicode   bool
-	Animation    *AnimationOptions
-	Position     *PositionOptions
-	FileTransfer bool
-}
-
-// AnimationOptions contains parameters for Kitty image animation
-type AnimationOptions struct {
-	DelayMs  int      // Delay between frames in milliseconds
-	Loops    int      // Number of animation loops (0 = infinite)
-	ImageIDs []string // List of image IDs to animate between
-}
-
-// PositionOptions contains parameters for precise image positioning
-type PositionOptions struct {
-	X      int // X coordinate in character cells
-	Y      int // Y coordinate in character cells
-	ZIndex int // Z-index for layering
-}
-
-// SixelClearMode defines how sixel images should be cleared
-type SixelClearMode int
-
-const (
-	// SixelClearScreen clears the entire screen
-	SixelClearScreen SixelClearMode = iota
-	// SixelClearPrecise clears only the exact image area
-	SixelClearPrecise
-)
-
-// SixelOptions contains Sixel-specific rendering options
-type SixelOptions struct {
-	Palette         int            // Number of colors in palette
-	Background      string         // Background color
-	CustomPalette   color.Palette  // Custom color palette
-	ClearMode       SixelClearMode // How to clear images
-	OptimizePalette bool           // Use median cut optimization
-}
-
-// ITerm2Options contains iTerm2-specific rendering options
-type ITerm2Options struct {
-	PreserveAspectRatio bool
-	Inline              bool
 }
 
 // New creates a new Image from an image.Image
@@ -242,7 +192,7 @@ func (i *Image) Virtual(v bool) *Image {
 func (i *Image) Dither(d bool) *Image {
 	i.dither = d
 	if d && i.ditherMode == DitherNone {
-		i.ditherMode = DitherStucki
+		i.ditherMode = DitherFloydSteinberg
 	}
 	return i
 }
@@ -251,12 +201,6 @@ func (i *Image) Dither(d bool) *Image {
 func (i *Image) DitherMode(mode DitherMode) *Image {
 	i.ditherMode = mode
 	i.dither = mode != DitherNone
-	return i
-}
-
-// OptimizePalette enables/disables palette optimization (Sixel only)
-func (i *Image) OptimizePalette(optimize bool) *Image {
-	i.optimizePalette = optimize
 	return i
 }
 
@@ -293,13 +237,21 @@ func (i *Image) Print() error {
 }
 
 // Clear removes the image from the terminal
-func (i *Image) Clear() error {
+func (i *Image) Clear(opts ClearOptions) error {
 	renderer, err := i.getRenderer()
 	if err != nil {
 		return err
 	}
+	return renderer.Clear(opts)
+}
 
-	return renderer.Clear(ClearOptions{})
+// ClearAll removes all images from the terminal
+func (i *Image) ClearAll() error {
+	renderer, err := i.getRenderer()
+	if err != nil {
+		return err
+	}
+	return renderer.Clear(ClearOptions{All: true})
 }
 
 // loadImage loads the image from the configured source
@@ -367,9 +319,8 @@ func (i *Image) buildRenderOptions() RenderOptions {
 	// Initialize SixelOptions with defaults for Sixel protocol
 	if i.protocol == Sixel {
 		opts.SixelOpts = &SixelOptions{
-			Palette:         256,               // Default to 256 colors
-			ClearMode:       SixelClearPrecise, // Default to precise clearing
-			OptimizePalette: i.optimizePalette, // Use user setting
+			Colors:    100,               // Default to 100 colors
+			ClearMode: SixelClearPrecise, // Default to precise clearing
 		}
 	}
 

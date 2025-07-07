@@ -11,6 +11,12 @@ import (
 	"strings"
 )
 
+// ITerm2Options contains iTerm2-specific rendering options
+type ITerm2Options struct {
+	PreserveAspectRatio bool
+	Inline              bool
+}
+
 // ITerm2Renderer implements the Renderer interface for iTerm2 inline images protocol
 type ITerm2Renderer struct{}
 
@@ -53,7 +59,7 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 			charWidth = (pixelWidth + 7) / 8 // Default 8px per char
 		}
 	}
-	
+
 	if opts.Height > 0 {
 		charHeight = opts.Height
 	} else {
@@ -108,7 +114,7 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 	// Combine ECH sequence with iTerm2 image sequence
 	// Format: ECH_sequence + \033]1337;File=[parameters]:[base64 data]\007
 	imageSequence := fmt.Sprintf("\x1b]1337;File=%s:%s\x07", paramStr, base64.StdEncoding.EncodeToString(data))
-	
+
 	// Combine ECH clearing with image display
 	output := echSequence.String() + imageSequence
 
@@ -130,9 +136,9 @@ func (r *ITerm2Renderer) Print(img image.Image, opts RenderOptions) error {
 func (r *ITerm2Renderer) Clear(opts ClearOptions) error {
 	// iTerm2 doesn't have a specific image clear command like Kitty
 	// The best we can do is use terminal reset sequences or clear screen
-	
+
 	var clearSequence string
-	
+
 	if opts.All {
 		// Clear the entire screen and scrollback buffer
 		clearSequence = "\x1b[2J\x1b[3J\x1b[H"
@@ -144,7 +150,7 @@ func (r *ITerm2Renderer) Clear(opts ClearOptions) error {
 
 	// Apply tmux passthrough if needed
 	output := wrapTmuxPassthrough(clearSequence)
-	
+
 	_, err := io.WriteString(os.Stdout, output)
 	return err
 }

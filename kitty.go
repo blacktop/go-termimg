@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+
+	"golang.org/x/term"
 )
 
 // reference: https://github.com/kovidgoyal/kitty/tree/master/kittens/icat
@@ -48,6 +50,30 @@ const (
 	SUPPRESS_ERR = "q=2"
 )
 
+// AnimationOptions contains parameters for Kitty image animation
+type AnimationOptions struct {
+	DelayMs  int      // Delay between frames in milliseconds
+	Loops    int      // Number of animation loops (0 = infinite)
+	ImageIDs []string // List of image IDs to animate between
+}
+
+// PositionOptions contains parameters for precise image positioning
+type PositionOptions struct {
+	X      int // X coordinate in character cells
+	Y      int // Y coordinate in character cells
+	ZIndex int // Z-index for layering
+}
+
+// KittyOptions contains Kitty-specific rendering options
+type KittyOptions struct {
+	ImageID      string
+	Placement    string
+	UseUnicode   bool
+	Animation    *AnimationOptions
+	Position     *PositionOptions
+	FileTransfer bool
+}
+
 // Global image ID counter for Kitty protocol to ensure unique IDs across all renderer instances
 var globalKittyImageID uint32
 
@@ -73,7 +99,7 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	// Initialize renderer if needed
 	if r.chunkSize == 0 {
-		r.chunkSize = 3072 // Raw chunk size for 4KB base64 payload (4096 / 4 * 3)
+		r.chunkSize = BASE64_CHUNK_SIZE
 	}
 
 	// Generate unique image ID using atomic counter to ensure uniqueness across all instances
@@ -104,6 +130,30 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	}
 	if opts.Height > 0 {
 		rows = opts.Height
+	}
+
+	// If no dimensions specified, auto-detect terminal size
+	if opts.Width == 0 && opts.Height == 0 && opts.ScaleMode == ScaleFit {
+		if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			// For ScaleFit mode, calculate the scaling to fit within terminal
+			srcW := float64(pixelWidth)
+			srcH := float64(pixelHeight)
+
+			// Convert terminal cells to approximate pixels
+			termPixelW := float64(termWidth * fontW)
+			termPixelH := float64(termHeight * fontH)
+
+			// Calculate scaling ratios
+			ratioW := termPixelW / srcW
+			ratioH := termPixelH / srcH
+
+			// Use the smaller ratio to fit within bounds
+			ratio := min(ratioW, ratioH)
+
+			// Calculate final dimensions in cells
+			cols = int((srcW * ratio) / float64(fontW))
+			rows = int((srcH * ratio) / float64(fontH))
+		}
 	}
 
 	// Build control data (with quiet mode to suppress terminal responses)
@@ -170,7 +220,7 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		}
 	}
 
-	return output.String(), nil
+	return wrapTmuxPassthrough(output.String()), nil
 }
 
 // Print outputs the image directly to stdout
@@ -186,12 +236,6 @@ func (r *KittyRenderer) Print(img image.Image, opts RenderOptions) error {
 	if err != nil {
 		return err
 	}
-
-	// For terminal multiplexers, wrap in passthrough sequences
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
-
 	_, err = io.WriteString(os.Stdout, output)
 
 	// Handle post-render operations
@@ -227,17 +271,12 @@ func (r *KittyRenderer) Clear(opts ClearOptions) error {
 		// Clear the last rendered image
 		control = fmt.Sprintf("a=d,d=i,i=%d", r.lastID)
 	} else {
-		// Nothing to clear
-		return nil
+		// If no specific image to clear, clear all Kitty images
+		control = "a=d"
 	}
 
-	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-
-	// Handle terminal multiplexers
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
-
+	output := fmt.Sprintf("\x1b_G%s\x1b\\", control)
+	output = wrapTmuxPassthrough(output)
 	_, err := io.WriteString(os.Stdout, output)
 	return err
 }
@@ -266,11 +305,7 @@ func (r *KittyRenderer) AnimateImages(imageIDs []string, delayMs int, loops int)
 		strings.Join(imageIDs, ":"), delayMs, loops)
 
 	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-
-	// Handle terminal multiplexers
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
+	output = wrapTmuxPassthrough(output)
 
 	_, err := io.WriteString(os.Stdout, output)
 	return err
@@ -290,11 +325,7 @@ func (r *KittyRenderer) PlaceImage(imageID string, xCells, yCells, zIndex int) e
 	}
 
 	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-
-	// Handle terminal multiplexers
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
+	output = wrapTmuxPassthrough(output)
 
 	_, err := io.WriteString(os.Stdout, output)
 	return err
@@ -328,11 +359,7 @@ func (r *KittyRenderer) SendFile(filePath string, opts RenderOptions) error {
 
 	// Build the escape sequence (quiet mode already included in control)
 	output := fmt.Sprintf("\x1b_G%s;%s\x1b\\", control, encodedPath)
-
-	// Handle terminal multiplexers
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
+	output = wrapTmuxPassthrough(output)
 
 	_, err := io.WriteString(os.Stdout, output)
 	return err
@@ -347,11 +374,7 @@ func (r *KittyRenderer) ClearVirtualImage(imageID string) error {
 	// Build delete control sequence specifically for virtual images
 	control := fmt.Sprintf("a=d,d=i,i=%s", imageID)
 	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-
-	// Handle terminal multiplexers
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
+	output = wrapTmuxPassthrough(output)
 
 	_, err := io.WriteString(os.Stdout, output)
 	return err

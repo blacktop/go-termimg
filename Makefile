@@ -20,7 +20,8 @@ PROTOCOL ?=
 debug:
 	@echo "🚀 Starting dlv debug server on :2345"
 	@echo "VSCode debugger can now attach to localhost:2345"
-	dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat-simple/main.go -- -protocol $(PROTOCOL) -clear -scale none -w 200 -H 151 ./test/image_smol.png
+	dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat-simple/main.go -- -protocol $(PROTOCOL) -clear -dither -optimize -w 200 -H 151 ./test/image_smol.png
+	# dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat-simple/main.go -- -protocol $(PROTOCOL) -clear -dither -optimize -scale fit -w 200 -H 151 ./test/image_smol.png
 
 .PHONY: debug-auto
 debug-auto: PROTOCOL := auto

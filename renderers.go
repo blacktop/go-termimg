@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/color/palette"
+	"image/draw"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/makeworld-the-better-one/dither/v2"
-	"github.com/nfnt/resize"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/term"
 )
 
@@ -39,8 +40,8 @@ func GetRenderer(protocol Protocol) (Renderer, error) {
 
 // processImage handles common image processing tasks
 func processImage(img image.Image, opts RenderOptions) (image.Image, error) {
-	// Handle resizing if dimensions are specified
-	if opts.Width > 0 || opts.Height > 0 {
+	// Handle resizing if dimensions are specified OR if ScaleFit mode with no dimensions (auto-detect)
+	if opts.Width > 0 || opts.Height > 0 || (opts.Width == 0 && opts.Height == 0 && opts.ScaleMode == ScaleFit) {
 		img = resizeImage(img, opts)
 	}
 
@@ -57,15 +58,28 @@ func resizeImage(img image.Image, opts RenderOptions) image.Image {
 	bounds := img.Bounds()
 	srcW, srcH := bounds.Dx(), bounds.Dy()
 
-	// If no dimensions are specified, return original image
+	// If no dimensions are specified, try to auto-detect terminal size for ScaleFit mode
 	if opts.Width == 0 && opts.Height == 0 {
-		return img
+		if opts.ScaleMode == ScaleFit {
+			// Try to get terminal size
+			if width, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+				opts.Width = width
+				opts.Height = height
+			} else {
+				// If we can't detect terminal size, return original image
+				return img
+			}
+		} else {
+			// For other scale modes without dimensions, return original
+			return img
+		}
 	}
 
 	// Get terminal font dimensions for accurate sizing
 	fontW, fontH := getTerminalFontSize()
 
 	// Convert character cells to pixels
+	// For halfblocks, each character cell represents 1 pixel width and 2 pixels height
 	targetW := opts.Width * fontW
 	targetH := opts.Height * fontH
 
@@ -135,80 +149,29 @@ func ditherImage(img image.Image, mode DitherMode) image.Image {
 		return img
 	}
 
-	// Create ditherer directly with proper error handling
-	palette := createDitherPalette(mode)
-	if len(palette) == 0 {
+	// Create palette for dithering
+	pal := createDitherPalette(mode)
+	if len(pal) == 0 {
 		return img // Return original if palette creation fails
 	}
 
-	ditherer := dither.NewDitherer(palette)
-	if ditherer == nil {
-		return img // Return original if ditherer creation fails
-	}
+	bounds := img.Bounds()
+	dst := image.NewPaletted(bounds, pal)
 
-	// Apply dithering algorithm based on mode
-	switch mode {
-	case DitherStucki:
-		ditherer.Matrix = dither.Stucki
-	case DitherFloydSteinberg:
-		ditherer.Matrix = dither.FloydSteinberg
-	}
+	draw.FloydSteinberg.Draw(dst, bounds, img, image.Point{})
 
-	return ditherer.Dither(img)
+	return dst
 }
 
 // createDitherPalette creates an appropriate palette for the dither mode
 func createDitherPalette(mode DitherMode) color.Palette {
 	switch mode {
-	case DitherStucki, DitherFloydSteinberg:
-		// Create a web-safe palette for better terminal compatibility
-		return createWebSafePalette()
+	case DitherFloydSteinberg:
+		// Use web-safe palette for better terminal compatibility
+		return palette.WebSafe
 	default:
-		// Simple 16-color palette for other modes
-		return createSimplePalette()
-	}
-}
-
-// createWebSafePalette creates a web-safe color palette
-func createWebSafePalette() color.Palette {
-	var palette color.Palette
-
-	// Create a 216-color web-safe palette (6x6x6)
-	for r := range 6 {
-		for g := range 6 {
-			for b := range 6 {
-				palette = append(palette, color.RGBA{
-					R: uint8(r * 51),
-					G: uint8(g * 51),
-					B: uint8(b * 51),
-					A: 255,
-				})
-			}
-		}
-	}
-
-	return palette
-}
-
-// createSimplePalette creates a simple 16-color palette
-func createSimplePalette() color.Palette {
-	return color.Palette{
-		color.RGBA{0, 0, 0, 255},       // Black
-		color.RGBA{128, 0, 0, 255},     // Maroon
-		color.RGBA{0, 128, 0, 255},     // Green
-		color.RGBA{128, 128, 0, 255},   // Olive
-		color.RGBA{0, 0, 128, 255},     // Navy
-		color.RGBA{128, 0, 128, 255},   // Purple
-		color.RGBA{0, 128, 128, 255},   // Teal
-		color.RGBA{192, 192, 192, 255}, // Silver
-		color.RGBA{128, 128, 128, 255}, // Gray
-		color.RGBA{255, 0, 0, 255},     // Red
-		color.RGBA{0, 255, 0, 255},     // Lime
-		color.RGBA{255, 255, 0, 255},   // Yellow
-		color.RGBA{0, 0, 255, 255},     // Blue
-		color.RGBA{255, 0, 255, 255},   // Fuchsia
-		color.RGBA{0, 255, 255, 255},   // Aqua
-		color.RGBA{255, 255, 255, 255}, // White
+		// Use the standard Plan9 palette for other modes
+		return palette.Plan9
 	}
 }
 
@@ -386,7 +349,12 @@ func ResizeImage(img image.Image, width, height uint) image.Image {
 	if width == 0 && height == 0 {
 		return img
 	}
-	return resize.Resize(width, height, img, resize.Lanczos3)
+
+	dst := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
+
+	return dst
 }
 
 // DitherImage dithers an image using the given palette.
@@ -397,6 +365,11 @@ func DitherImage(img image.Image, palette color.Palette) image.Image {
 	if len(palette) == 0 {
 		return img
 	}
-	ditherer := dither.NewDitherer(palette)
-	return ditherer.Dither(img)
+
+	bounds := img.Bounds()
+	dst := image.NewPaletted(bounds, palette)
+
+	draw.FloydSteinberg.Draw(dst, bounds, img, image.Point{})
+
+	return dst
 }
