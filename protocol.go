@@ -2,8 +2,6 @@ package termimg
 
 import (
 	"fmt"
-	"os"
-	"strings"
 )
 
 type Protocol int
@@ -45,34 +43,20 @@ func SupportedProtocols() string {
 func DetermineProtocols() []Protocol {
 	protos := make([]Protocol, 0, 4)
 
-	// Special handling for tmux/screen - detect outer terminal capabilities
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" ||
-		os.Getenv("TERM_PROGRAM") == "screen" {
-		// Try to detect the outer terminal protocol from environment hints
-		outerProto := detectOuterTerminalProtocol()
-		if outerProto != Unsupported {
-			protos = append(protos, outerProto)
-		}
-		// Always include Sixel and Halfblocks as fallbacks in tmux
-		protos = append(protos, Sixel)
-		protos = append(protos, Halfblocks)
-		return protos
-	}
+	features := QueryTerminalFeatures()
 
-	// Normal detection order: Kitty -> iTerm2 -> Sixel -> Halfblocks
-	if KittySupported() {
+	// Detection order: Kitty -> iTerm2 -> Sixel -> Halfblocks
+	if features.KittyGraphics {
 		protos = append(protos, Kitty)
 	}
-	if ITerm2Supported() {
+	if features.ITerm2Graphics {
 		protos = append(protos, ITerm2)
 	}
-	if SixelSupported() {
+	if features.SixelGraphics {
 		protos = append(protos, Sixel)
 	}
-	if HalfblocksSupported() {
-		// Halfblocks is always available as the ultimate fallback
-		protos = append(protos, Halfblocks)
-	}
+	// Halfblocks is always available as the ultimate fallback
+	protos = append(protos, Halfblocks)
 
 	return protos
 }
@@ -82,44 +66,5 @@ func DetectProtocol() Protocol {
 	if protos := DetermineProtocols(); len(protos) > 0 {
 		return protos[0]
 	}
-	return Unsupported
-}
-
-// detectOuterTerminalProtocol attempts to detect the terminal protocol
-// of the outer terminal when running inside tmux/screen by examining
-// environment variables that may indicate the outer terminal type
-func detectOuterTerminalProtocol() Protocol {
-	// Check for Kitty-specific environment variables
-	if os.Getenv("KITTY_WINDOW_ID") != "" {
-		return Kitty
-	}
-	
-	// Check for Ghostty which supports Kitty protocol
-	if os.Getenv("GHOSTTY_BIN_DIR") != "" || os.Getenv("GHOSTTY_RESOURCES_DIR") != "" {
-		return Kitty
-	}
-	
-	// Check for iTerm2-specific environment variables
-	if os.Getenv("ITERM_SESSION_ID") != "" || os.Getenv("LC_TERMINAL") == "iTerm2" {
-		return ITerm2
-	}
-	
-	// Check for WezTerm which supports iTerm2 protocol
-	if os.Getenv("WEZTERM_EXECUTABLE") != "" {
-		return ITerm2
-	}
-	
-	// Check TERM_PROGRAM_VERSION which persists through tmux
-	termProgram := os.Getenv("TERM_PROGRAM_VERSION")
-	if termProgram != "" {
-		// These checks are less reliable but may help
-		if strings.Contains(strings.ToLower(termProgram), "kitty") {
-			return Kitty
-		}
-		if strings.Contains(strings.ToLower(termProgram), "iterm") {
-			return ITerm2
-		}
-	}
-	
 	return Unsupported
 }
