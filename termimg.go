@@ -319,7 +319,7 @@ func (i *Image) buildRenderOptions() RenderOptions {
 	// Initialize SixelOptions with defaults for Sixel protocol
 	if i.protocol == Sixel {
 		opts.SixelOpts = &SixelOptions{
-			Colors:    100,               // Default to 100 colors
+			Colors:    100,               // Default to 100 colors (sixel is VERY slow)
 			ClearMode: SixelClearPrecise, // Default to precise clearing
 		}
 	}
