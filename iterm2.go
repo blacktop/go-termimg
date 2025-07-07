@@ -8,7 +8,6 @@ import (
 	"image/png"
 	"io"
 	"os"
-	"slices"
 	"strings"
 )
 
@@ -39,79 +38,81 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 	pixelWidth := bounds.Dx()
 	pixelHeight := bounds.Dy()
 
+	data := buf.Bytes()
+
+	// Calculate character dimensions for ECH clearing
+	var charWidth, charHeight int
+	if opts.Width > 0 {
+		charWidth = opts.Width
+	} else {
+		// Estimate character width from pixels (default 8px per char)
+		fontW, _ := getTerminalFontSize()
+		if fontW > 0 {
+			charWidth = (pixelWidth + fontW - 1) / fontW // Round up
+		} else {
+			charWidth = (pixelWidth + 7) / 8 // Default 8px per char
+		}
+	}
+	
+	if opts.Height > 0 {
+		charHeight = opts.Height
+	} else {
+		// Estimate character height from pixels (default 16px per char)
+		_, fontH := getTerminalFontSize()
+		if fontH > 0 {
+			charHeight = (pixelHeight + fontH - 1) / fontH // Round up
+		} else {
+			charHeight = (pixelHeight + 15) / 16 // Default 16px per char
+		}
+	}
+
+	// Build ECH sequence to clear background characters before image placement
+	var echSequence strings.Builder
+	for i := 0; i < charHeight; i++ {
+		// ECH: Erase Character - clear 'charWidth' characters on current line
+		echSequence.WriteString(fmt.Sprintf("\x1b[%dX", charWidth))
+		if i < charHeight-1 {
+			// CUD: Cursor Down - move to next line
+			echSequence.WriteString("\x1b[1B")
+		}
+	}
+	// CUU: Cursor Up - move back to original position
+	if charHeight > 0 {
+		echSequence.WriteString(fmt.Sprintf("\x1b[%dA", charHeight))
+	}
+
 	// Build the control parameters
 	var params []string
 
-	// Always include the filename and size
-	params = append(params, "name="+base64.StdEncoding.EncodeToString([]byte("image.png")))
-	params = append(params, fmt.Sprintf("size=%d", len(buf.Bytes())))
+	// Always include inline=1 and doNotMoveCursor=1 for proper rendering
+	params = append(params, "inline=1")
+	params = append(params, "doNotMoveCursor=1")
 
-	// Add dimensions if specified in options
-	if opts.Width > 0 {
-		// iTerm2 uses character cells for width
-		params = append(params, fmt.Sprintf("width=%d", opts.Width))
-	} else {
-		// Calculate character width from pixels
-		fontW, _ := getTerminalFontSize()
-		if fontW > 0 {
-			params = append(params, fmt.Sprintf("width=%d", pixelWidth/fontW))
-		}
-	}
+	// Add file size
+	params = append(params, fmt.Sprintf("size=%d", len(data)))
 
-	if opts.Height > 0 {
-		// iTerm2 uses character cells for height
-		params = append(params, fmt.Sprintf("height=%d", opts.Height))
-	} else {
-		// Calculate character height from pixels
-		_, fontH := getTerminalFontSize()
-		if fontH > 0 {
-			params = append(params, fmt.Sprintf("height=%d", pixelHeight/fontH))
-		}
-	}
+	// Add pixel dimensions (not character cells)
+	params = append(params, fmt.Sprintf("width=%dpx", pixelWidth))
+	params = append(params, fmt.Sprintf("height=%dpx", pixelHeight))
 
 	// Handle iTerm2-specific options
 	if opts.ITerm2Opts != nil {
 		if opts.ITerm2Opts.PreserveAspectRatio {
 			params = append(params, "preserveAspectRatio=1")
 		}
-		if opts.ITerm2Opts.Inline {
-			params = append(params, "inline=1")
-		}
-	} else {
-		// Default to inline display
-		params = append(params, "inline=1")
 	}
 
 	// Join parameters
 	paramStr := strings.Join(params, ";")
 
-	data := buf.Bytes()
+	// Combine ECH sequence with iTerm2 image sequence
+	// Format: ECH_sequence + \033]1337;File=[parameters]:[base64 data]\007
+	imageSequence := fmt.Sprintf("\x1b]1337;File=%s:%s\x07", paramStr, base64.StdEncoding.EncodeToString(data))
+	
+	// Combine ECH clearing with image display
+	output := echSequence.String() + imageSequence
 
-	var output string
-	if len(data) > CHUNK_SIZE {
-		// If the encoded data is too large, split it into chunks
-		output = fmt.Sprintf("\x1b]1337;MultipartFile=%s:%s\x07",
-			paramStr,
-			base64.StdEncoding.EncodeToString(data[:CHUNK_SIZE]),
-		)
-		for chunk := range slices.Chunk(data[CHUNK_SIZE:], CHUNK_SIZE) {
-			output += fmt.Sprintf("\x1b]1337;FilePart=inline=1:%s\x07", base64.StdEncoding.EncodeToString(chunk))
-		}
-		output += "\x1b]1337;FileEnd\x07" // End the multipart sequence
-	} else {
-		// If the encoded data is small enough, we can send it all at once
-
-		// Format: \033]1337;File=[parameters]:[base64 data]\007
-		output = fmt.Sprintf("\x1b]1337;File=%s:%s\x07", paramStr, base64.StdEncoding.EncodeToString(data))
-	}
-
-	// Handle terminal multiplexers
-	if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-		// For tmux, we need to escape the sequence
-		output = "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
-
-	return output, nil
+	return wrapTmuxPassthrough(output), nil
 }
 
 // Print outputs the image directly to stdout
@@ -128,26 +129,23 @@ func (r *ITerm2Renderer) Print(img image.Image, opts RenderOptions) error {
 // Clear removes the image from the terminal
 func (r *ITerm2Renderer) Clear(opts ClearOptions) error {
 	// iTerm2 doesn't have a specific image clear command like Kitty
-	// Images are cleared when overwritten or when the terminal is cleared
-	// We can send a small transparent image to "clear" the space
-
+	// The best we can do is use terminal reset sequences or clear screen
+	
+	var clearSequence string
+	
 	if opts.All {
-		// Clear the entire screen
-		clearSequence := "\x1b[2J\x1b[H"
-
-		// Handle terminal multiplexers
-		if os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux" {
-			clearSequence = "\x1bPtmux;\x1b" + strings.ReplaceAll(clearSequence, "\x1b", "\x1b\x1b") + "\x1b\\"
-		}
-
-		_, err := io.WriteString(os.Stdout, clearSequence)
-		return err
+		// Clear the entire screen and scrollback buffer
+		clearSequence = "\x1b[2J\x1b[3J\x1b[H"
+	} else {
+		// For individual image clearing, iTerm2 doesn't have a direct method
+		// We can try to clear the current line and move cursor up
+		clearSequence = "\x1b[2K\x1b[1A\x1b[2K\x1b[1B"
 	}
 
-	// For specific image clearing, we can't really do much with iTerm2
-	// since it doesn't support image IDs like Kitty
-	// Just move cursor to beginning of line
-	_, err := io.WriteString(os.Stdout, "\r")
+	// Apply tmux passthrough if needed
+	output := wrapTmuxPassthrough(clearSequence)
+	
+	_, err := io.WriteString(os.Stdout, output)
 	return err
 }
 

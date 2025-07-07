@@ -367,6 +367,17 @@ func inTmux() bool {
 	return os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux"
 }
 
+// wrapTmuxPassthrough wraps an escape sequence for tmux passthrough if needed
+// This ensures graphics protocols can pass through tmux to the outer terminal
+func wrapTmuxPassthrough(output string) string {
+	if inTmux() {
+		// tmux passthrough format: \ePtmux;\e{escaped_sequence}\e\\
+		// All \e (ESC) characters in the sequence must be doubled
+		return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
+	}
+	return output
+}
+
 // ResizeImage resizes an image to the given width and height.
 func ResizeImage(img image.Image, width, height uint) image.Image {
 	if img == nil {

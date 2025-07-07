@@ -30,5 +30,5 @@ cmd/imgcat/imgcat
 
 # AI
 .claude/
-CLAUDE.md
+CLAUDE*.md
 GEMINI.md
