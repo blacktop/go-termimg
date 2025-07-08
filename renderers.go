@@ -7,7 +7,6 @@ import (
 	"image/color/palette"
 	"image/draw"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -148,30 +147,16 @@ func ditherImage(img image.Image, mode DitherMode) image.Image {
 	if mode == DitherNone {
 		return img
 	}
-
-	// Create palette for dithering
-	pal := createDitherPalette(mode)
-	if len(pal) == 0 {
-		return img // Return original if palette creation fails
-	}
-
-	bounds := img.Bounds()
-	dst := image.NewPaletted(bounds, pal)
-
-	draw.FloydSteinberg.Draw(dst, bounds, img, image.Point{})
-
-	return dst
+	return DitherImage(img, getDitherPalette(mode))
 }
 
-// createDitherPalette creates an appropriate palette for the dither mode
-func createDitherPalette(mode DitherMode) color.Palette {
+// getDitherPalette creates an appropriate palette for the dither mode
+func getDitherPalette(mode DitherMode) color.Palette {
 	switch mode {
 	case DitherFloydSteinberg:
-		// Use web-safe palette for better terminal compatibility
-		return palette.WebSafe
-	default:
-		// Use the standard Plan9 palette for other modes
 		return palette.Plan9
+	default:
+		return palette.WebSafe
 	}
 }
 
@@ -248,86 +233,6 @@ func queryTerminalFontSize() (width, height int) {
 	case <-time.After(200 * time.Millisecond):
 		return 0, 0
 	}
-}
-
-// parseFontSizeResponse parses the terminal's response to CSI 16 t
-// Expected format: \x1b[6;height;width;t
-func parseFontSizeResponse(response string) (width, height int) {
-	// Look for the pattern [6;height;width;t or [6;height;widtht
-	if !strings.Contains(response, "[6;") {
-		return 0, 0
-	}
-
-	// Find the start of the sequence
-	start := strings.Index(response, "[6;")
-	if start == -1 {
-		return 0, 0
-	}
-
-	// Extract the part after [6;
-	remaining := response[start+3:]
-
-	// Find the end marker (t)
-	end := strings.Index(remaining, "t")
-	if end == -1 {
-		return 0, 0
-	}
-
-	// Parse the height;width part
-	parts := strings.Split(remaining[:end], ";")
-	if len(parts) >= 2 {
-		if h, err := strconv.Atoi(parts[0]); err == nil && h > 0 {
-			if w, err := strconv.Atoi(parts[1]); err == nil && w > 0 {
-				return w, h
-			}
-		}
-	}
-
-	return 0, 0
-}
-
-// getFontSizeFallback returns reasonable font size defaults based on terminal type
-func getFontSizeFallback() (width, height int) {
-	term := os.Getenv("TERM")
-	termProgram := os.Getenv("TERM_PROGRAM")
-
-	switch {
-	case termProgram == "vscode":
-		// VS Code typically uses smaller fonts
-		return 7, 14
-	case termProgram == "iTerm.app":
-		// iTerm2 common defaults
-		return 8, 16
-	case termProgram == "WezTerm":
-		// WezTerm defaults
-		return 8, 18
-	case termProgram == "Alacritty":
-		// Alacritty defaults
-		return 7, 15
-	case strings.Contains(termProgram, "kitty"):
-		// Kitty defaults
-		return 8, 16
-	case strings.Contains(term, "xterm"):
-		// Xterm family
-		return 7, 14
-	default:
-		// Generic fallback
-		return 8, 16
-	}
-}
-
-// isInteractiveTerminal checks if we're running in an interactive terminal
-func isInteractiveTerminal() bool {
-	fileInfo, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (fileInfo.Mode() & os.ModeCharDevice) != 0
-}
-
-// inTmux checks if we're running inside tmux
-func inTmux() bool {
-	return os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux"
 }
 
 // wrapTmuxPassthrough wraps an escape sequence for tmux passthrough if needed
