@@ -23,21 +23,14 @@ func (r *HalfblocksRenderer) Protocol() Protocol {
 
 // Render generates the escape sequence for displaying the image
 func (r *HalfblocksRenderer) Render(img image.Image, opts RenderOptions) (string, error) {
-	// For halfblocks, we don't use processImage because mosaic handles resizing
-	// We only apply dithering if requested
-	processed := img
-	if opts.Dither {
-		processed = ditherImage(img, opts.DitherMode)
-	}
-
 	// Create mosaic renderer
-	m := mosaic.New()
+	m := mosaic.New().Dither(opts.Dither)
 
 	// Configure dimensions in character cells
 	// If no dimensions specified, auto-detect terminal size
 	adjustedWidth := opts.Width
 	adjustedHeight := opts.Height
-	
+
 	if adjustedWidth == 0 && adjustedHeight == 0 {
 		// Get terminal size for auto-fitting
 		if width, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
@@ -49,30 +42,30 @@ func (r *HalfblocksRenderer) Render(img image.Image, opts RenderOptions) (string
 			adjustedHeight = 24
 		}
 	}
-	
+
 	// For ScaleFit mode with both dimensions, we need to maintain aspect ratio
 	if opts.ScaleMode == ScaleFit && adjustedWidth > 0 && adjustedHeight > 0 {
 		bounds := img.Bounds()
 		srcW, srcH := float64(bounds.Dx()), float64(bounds.Dy())
-		
+
 		// For halfblocks, each character cell is roughly 1 unit wide and 2 units tall
 		// So we need to adjust the height calculation to account for this 1:2 ratio
 		// This means the effective "pixel" height is double the character height
 		effectiveHeight := float64(adjustedHeight) * 2.0
-		
+
 		// Calculate the scaling ratios
 		ratioW := float64(adjustedWidth) / srcW
 		ratioH := effectiveHeight / srcH
-		
+
 		// For ScaleFit, use the smaller ratio to fit within bounds
 		ratio := min(ratioW, ratioH)
-		
+
 		// Calculate the actual dimensions that maintain aspect ratio
 		adjustedWidth = int(srcW * ratio)
 		// Divide by 2 to convert back from effective pixels to character cells
 		adjustedHeight = int(srcH * ratio / 2.0)
 	}
-	
+
 	// Apply dimensions to mosaic
 	if adjustedWidth > 0 {
 		m = m.Width(adjustedWidth)
@@ -83,9 +76,9 @@ func (r *HalfblocksRenderer) Render(img image.Image, opts RenderOptions) (string
 		r.lastHeight = adjustedHeight
 	}
 
-	// Render using mosaic
-	output := m.Render(processed)
-	
+	// Render using mosaic (note: tmux wrapping not needed here)
+	output := m.Render(img)
+
 	// If dimensions weren't explicitly set, estimate from output
 	if r.lastWidth == 0 || r.lastHeight == 0 {
 		lines := strings.Split(output, "\n")
@@ -101,7 +94,7 @@ func (r *HalfblocksRenderer) Render(img image.Image, opts RenderOptions) (string
 			}
 		}
 	}
-	
+
 	return output, nil
 }
 
@@ -121,7 +114,7 @@ func (r *HalfblocksRenderer) Clear(opts ClearOptions) error {
 	// Use tracked dimensions if available, otherwise fall back to defaults
 	clearLines := r.lastHeight
 	clearWidth := r.lastWidth
-	
+
 	// Fallback to reasonable defaults if no dimensions tracked
 	if clearLines <= 0 {
 		clearLines = 20
@@ -129,7 +122,7 @@ func (r *HalfblocksRenderer) Clear(opts ClearOptions) error {
 	if clearWidth <= 0 {
 		clearWidth = 80
 	}
-	
+
 	// Clear the exact area where the image was displayed
 	clearLine := strings.Repeat(" ", clearWidth)
 	for i := 0; i < clearLines; i++ {
