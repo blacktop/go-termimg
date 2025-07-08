@@ -196,7 +196,8 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 				chunkSequence = fmt.Sprintf("\x1b_Gm=0,q=2;%s\x1b\\", encodedChunk)
 			}
 		}
-		output.WriteString(chunkSequence)
+
+		output.WriteString(wrapTmuxPassthrough(chunkSequence))
 	}
 
 	// Handle Kitty-specific options
@@ -209,25 +210,25 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 		// Handle animation after image transfer
 		if opts.KittyOpts.Animation != nil && len(opts.KittyOpts.Animation.ImageIDs) > 0 {
-			// Note: Animation is handled separately after all images are transferred
+			// TODO: Animation is handled separately after all images are transferred
 			// This is just to validate the option structure
 		}
 
 		// Handle positioning after image transfer
 		if opts.KittyOpts.Position != nil {
-			// Note: Positioning is handled separately via PlaceImage method
+			// TODO: Positioning is handled separately via PlaceImage method
 			// This is just to validate the option structure
 		}
 	}
 
-	return wrapTmuxPassthrough(output.String()), nil
+	return output.String(), nil
 }
 
 // Print outputs the image directly to stdout
 func (r *KittyRenderer) Print(img image.Image, opts RenderOptions) error {
 	// Check if we should use file transfer optimization
 	if opts.KittyOpts != nil && opts.KittyOpts.FileTransfer {
-		// Note: File transfer would require knowing the source file path
+		// TODO: File transfer would require knowing the source file path
 		// This is best handled at a higher level in the Image API
 		// For now, fall back to regular rendering
 	}
@@ -549,8 +550,7 @@ func parseResponse(in []byte) (*KittyResponse, error) {
 	in = bytes.Trim(in, "\x00")
 	in = bytes.TrimSuffix(in, []byte("\x1b\\"))
 	in = bytes.TrimPrefix(in, []byte("\x1b_G"))
-	fields := bytes.Split(in, []byte(";"))
-	for _, field := range fields {
+	for field := range bytes.SplitSeq(in, []byte(";")) {
 		kv := bytes.Split(field, []byte("="))
 		if len(kv) != 2 {
 			resp.Message = string(field)
