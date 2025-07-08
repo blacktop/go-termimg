@@ -3,7 +3,9 @@ package termimg
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -30,6 +32,12 @@ var (
 	featuresCached bool
 )
 
+// Global cache for tmux passthrough enablement
+var (
+	tmuxPassthroughEnabled bool
+	tmuxPassthroughOnce    sync.Once
+)
+
 // QueryTerminalFeatures performs unified terminal capability detection
 func QueryTerminalFeatures() *TerminalFeatures {
 	if featuresCached && cachedFeatures != nil {
@@ -40,6 +48,11 @@ func QueryTerminalFeatures() *TerminalFeatures {
 		TermName:    os.Getenv("TERM"),
 		TermProgram: os.Getenv("TERM_PROGRAM"),
 		IsTmux:      inTmux(),
+	}
+
+	// Enable tmux passthrough if in tmux environment
+	if features.IsTmux {
+		enableTmuxPassthrough()
 	}
 
 	// Fast path: environment variable detection
@@ -401,6 +414,8 @@ func detectOuterTerminalProtocol() Protocol {
 	switch {
 	case os.Getenv("KITTY_WINDOW_ID") != "":
 		return Kitty
+	case os.Getenv("GHOSTTY_RESOURCES_DIR") != "":
+		return Kitty
 	case os.Getenv("ITERM_SESSION_ID") != "":
 		return ITerm2
 	case strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm"):
@@ -422,4 +437,27 @@ func detectOuterTerminalProtocol() Protocol {
 
 	// Default fallbacks for tmux environment
 	return Sixel // Sixel is widely supported
+}
+
+// enableTmuxPassthrough enables tmux passthrough for graphics protocols
+// required for graphics protocols to work properly in tmux
+func enableTmuxPassthrough() {
+	tmuxPassthroughOnce.Do(func() {
+		// -p flag sets the option for the current pane only
+		cmd := exec.Command("tmux", "set", "-p", "allow-passthrough", "on")
+
+		// silence outputs
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+
+		if err := cmd.Run(); err == nil {
+			tmuxPassthroughEnabled = true
+		}
+	})
+}
+
+// IsTmuxPassthroughEnabled returns whether tmux passthrough was successfully enabled
+func IsTmuxPassthroughEnabled() bool {
+	return tmuxPassthroughEnabled
 }

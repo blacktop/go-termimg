@@ -89,11 +89,25 @@ func (r *SixelRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		return "", fmt.Errorf("sixel encoding produced empty output")
 	}
 
-	// Get the sixel data
+	// Get the raw sixel data
 	sixelData := buf.String()
 
-	// Wrap in proper sixel escape sequences
-	output := fmt.Sprintf("\x1bPq%s\x1b\\", sixelData)
+	// Create the complete sixel sequence first
+	// Wrap raw sixel data in proper DCS (Device Control String) escape sequences
+	fullSixelSequence := fmt.Sprintf("\x1bPq%s\x1b\\", sixelData)
+
+	// Apply tmux passthrough to the complete sequence if needed
+	var output string
+	if inTmux() {
+		// The complete sixel sequence should start with escape sequence
+		if !strings.HasPrefix(fullSixelSequence, "\x1b") {
+			return "", fmt.Errorf("sixel sequence does not start with escape")
+		}
+		// Apply tmux passthrough to the complete sixel sequence
+		output = wrapTmuxPassthrough(fullSixelSequence)
+	} else {
+		output = fullSixelSequence
+	}
 
 	// Track dimensions for precise clearing
 	// Estimate character height based on image height and typical character metrics
@@ -106,7 +120,7 @@ func (r *SixelRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		r.lastHeight = max(bounds.Dy()/16, 1)
 	}
 
-	return wrapTmuxPassthrough(output), nil
+	return output, nil
 }
 
 // Print outputs the image directly to stdout
