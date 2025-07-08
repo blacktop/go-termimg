@@ -182,7 +182,6 @@ func getTerminalFontSize() (width, height int) {
 }
 
 // queryTerminalFontSize queries the terminal for actual font size in pixels
-// Based on ratatui-image's approach using CSI 16 t escape sequence
 func queryTerminalFontSize() (width, height int) {
 	// Only query if we're in an interactive terminal
 	if !isInteractiveTerminal() {
@@ -247,6 +246,14 @@ func wrapTmuxPassthrough(output string) string {
 		return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
 	}
 	return output
+}
+
+// getTmuxEscapeSequences returns the appropriate escape sequences for tmux mode
+func getTmuxEscapeSequences() (start, escape, end string) {
+	if inTmux() {
+		return "\x1bPtmux;", "\x1b\x1b", "\x1b\\"
+	}
+	return "", "\x1b", ""
 }
 
 // ResizeImage resizes an image to the given width and height.

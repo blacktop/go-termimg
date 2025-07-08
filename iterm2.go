@@ -72,19 +72,23 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 		}
 	}
 
+	// Get tmux-aware escape sequences
+	start, escape, end := getTmuxEscapeSequences()
+
 	// Build ECH sequence to clear background characters before image placement
 	var echSequence strings.Builder
+	echSequence.WriteString(start)
 	for i := 0; i < charHeight; i++ {
 		// ECH: Erase Character - clear 'charWidth' characters on current line
-		echSequence.WriteString(fmt.Sprintf("\x1b[%dX", charWidth))
+		echSequence.WriteString(fmt.Sprintf("%s[%dX", escape, charWidth))
 		if i < charHeight-1 {
 			// CUD: Cursor Down - move to next line
-			echSequence.WriteString("\x1b[1B")
+			echSequence.WriteString(fmt.Sprintf("%s[1B", escape))
 		}
 	}
 	// CUU: Cursor Up - move back to original position
 	if charHeight > 0 {
-		echSequence.WriteString(fmt.Sprintf("\x1b[%dA", charHeight))
+		echSequence.WriteString(fmt.Sprintf("%s[%dA", escape, charHeight))
 	}
 
 	// Build the control parameters
@@ -111,14 +115,13 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 	// Join parameters
 	paramStr := strings.Join(params, ";")
 
-	// Combine ECH sequence with iTerm2 image sequence
-	// Format: ECH_sequence + \033]1337;File=[parameters]:[base64 data]\007
-	imageSequence := fmt.Sprintf("\x1b]1337;File=%s:%s\x07", paramStr, base64.StdEncoding.EncodeToString(data))
+	// Format: \033]1337;File=[parameters]:[base64 data]\007
+	imageSequence := fmt.Sprintf("%s]1337;File=%s:%s\x07", escape, paramStr, base64.StdEncoding.EncodeToString(data))
 
-	// Combine ECH clearing with image display
-	output := echSequence.String() + imageSequence
+	// Combine ECH clearing with image display and add end sequence
+	output := echSequence.String() + imageSequence + end
 
-	return wrapTmuxPassthrough(output), nil
+	return output, nil
 }
 
 // Print outputs the image directly to stdout
@@ -137,21 +140,20 @@ func (r *ITerm2Renderer) Clear(opts ClearOptions) error {
 	// iTerm2 doesn't have a specific image clear command like Kitty
 	// The best we can do is use terminal reset sequences or clear screen
 
-	var clearSequence string
+	// Get tmux-aware escape sequences
+	start, escape, end := getTmuxEscapeSequences()
 
+	var clearSequence string
 	if opts.All {
 		// Clear the entire screen and scrollback buffer
-		clearSequence = "\x1b[2J\x1b[3J\x1b[H"
+		clearSequence = fmt.Sprintf("%s%s[2J%s[3J%s[H%s", start, escape, escape, escape, end)
 	} else {
 		// For individual image clearing, iTerm2 doesn't have a direct method
 		// We can try to clear the current line and move cursor up
-		clearSequence = "\x1b[2K\x1b[1A\x1b[2K\x1b[1B"
+		clearSequence = fmt.Sprintf("%s%s[2K%s[1A%s[2K%s[1B%s", start, escape, escape, escape, escape, end)
 	}
 
-	// Apply tmux passthrough if needed
-	output := wrapTmuxPassthrough(clearSequence)
-
-	_, err := io.WriteString(os.Stdout, output)
+	_, err := io.WriteString(os.Stdout, clearSequence)
 	return err
 }
 
