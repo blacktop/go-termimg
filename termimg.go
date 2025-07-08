@@ -84,6 +84,8 @@ type RenderOptions struct {
 	Dither     bool
 	DitherMode DitherMode
 
+	features *TerminalFeatures
+
 	// Protocol-specific options
 	KittyOpts  *KittyOptions
 	SixelOpts  *SixelOptions
@@ -314,6 +316,7 @@ func (i *Image) buildRenderOptions() RenderOptions {
 		Virtual:    i.virtual,
 		Dither:     i.dither,
 		DitherMode: i.ditherMode,
+		features:   QueryTerminalFeatures(),
 	}
 
 	// Initialize SixelOptions with defaults for Sixel protocol
