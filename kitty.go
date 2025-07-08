@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -564,4 +565,118 @@ func parseResponse(in []byte) (*KittyResponse, error) {
 		}
 	}
 	return &resp, nil
+}
+
+/* DETECTION FUNCTIONS */
+
+// DetectKittyFromEnvironment checks environment variables for Kitty indicators
+func DetectKittyFromEnvironment() bool {
+	// Check primary Kitty indicators
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		return true
+	}
+
+	// Check for specific terminals that support Kitty protocol
+	termProgram := os.Getenv("TERM_PROGRAM")
+	switch termProgram {
+	case "ghostty":
+		return true
+	case "WezTerm":
+		return true
+	case "rio":
+		return true
+	}
+
+	// Check TERM variable for Kitty
+	term := strings.ToLower(os.Getenv("TERM"))
+	if strings.Contains(term, "kitty") {
+		return true
+	}
+
+	// Check WezTerm specific environment variable
+	if os.Getenv("WEZTERM_EXECUTABLE") != "" {
+		return true
+	}
+
+	// When in tmux, check for outer terminal hints
+	if inTmux() {
+		// Check for Ghostty resources directory (strong indicator)
+		if os.Getenv("GHOSTTY_RESOURCES_DIR") != "" {
+			return true
+		}
+
+		// Check for WezTerm executable (strong indicator)
+		if os.Getenv("WEZTERM_EXECUTABLE") != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// DetectKittyFromQuery uses Kitty graphics query to detect Kitty protocol support
+func DetectKittyFromQuery() bool {
+	return queryKittyGraphics()
+}
+
+// queryKittyGraphics sends a Kitty graphics query and checks for a response
+func queryKittyGraphics() bool {
+	// Skip query-based detection if we already know it's not Kitty from environment
+	termProgram := os.Getenv("TERM_PROGRAM")
+	if termProgram == "Apple_Terminal" || termProgram == "Terminal" {
+		return false
+	}
+
+	// Open controlling terminal directly to avoid visible output
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return false // Can't open tty, fall back to env detection
+	}
+	defer tty.Close()
+
+	// Check if we're in an interactive terminal
+	if !term.IsTerminal(int(tty.Fd())) {
+		return false
+	}
+
+	// Save terminal state and enter raw mode
+	oldState, err := term.MakeRaw(int(tty.Fd()))
+	if err != nil {
+		return false
+	}
+	defer term.Restore(int(tty.Fd()), oldState)
+
+	// Send Kitty graphics query: ESC _ G a=q,t=d,f=24,i=42,s=1,v=1 ; AAAA ESC \
+	query := "\x1b_Gi=42,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
+
+	// Wrap for tmux passthrough if needed
+	if inTmux() {
+		query = wrapTmuxPassthrough(query)
+	}
+
+	// Send query to terminal device directly
+	if _, err := tty.WriteString(query); err != nil {
+		return false // Fail silently to avoid polluting output
+	}
+
+	// Read response with timeout
+	responseChan := make(chan bool, 1)
+	go func() {
+		buf := make([]byte, 256)
+		n, err := tty.Read(buf)
+		if err == nil && n > 0 {
+			response := string(buf[:n])
+			// Look for the image ID (42) in the response
+			responseChan <- strings.Contains(response, "42")
+		} else {
+			responseChan <- false
+		}
+	}()
+
+	select {
+	case result := <-responseChan:
+		return result
+	case <-time.After(200 * time.Millisecond):
+		return false
+	}
 }
