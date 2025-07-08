@@ -68,7 +68,7 @@ func init() {
 var rootCmd = &cobra.Command{
 	Use:   "imgcat <image>",
 	Short: "Display images in your terminal",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if verbose {
 			log.SetLevel(log.DebugLevel)

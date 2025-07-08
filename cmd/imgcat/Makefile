@@ -1,7 +1,7 @@
 .PHONY: debug
 debug: ## Debug in another terminal
 	@echo " > Debugging"
-	@dlv debug --headless --listen=:2345 --api-version=2 main.go -- -V --clear ../../test/image.png
+	@dlv debug --headless --listen=:2345 --api-version=2 main.go -- -V --clear ../../test/image_smol.png
 
 .PHONY: work
 work: clean ## Work on go-termimg package
