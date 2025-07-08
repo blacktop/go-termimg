@@ -7,7 +7,6 @@ import (
 	"image/color/palette"
 	"image/draw"
 	"os"
-	"strings"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -232,28 +231,6 @@ func queryTerminalFontSize() (width, height int) {
 	case <-time.After(200 * time.Millisecond):
 		return 0, 0
 	}
-}
-
-// wrapTmuxPassthrough wraps an escape sequence for tmux passthrough if needed
-// This ensures graphics protocols can pass through tmux to the outer terminal
-func wrapTmuxPassthrough(output string) string {
-	if inTmux() {
-		if !strings.HasPrefix(output, "\x1b") {
-			return output
-		}
-		// tmux passthrough format: \ePtmux;\e{escaped_sequence}\e\\
-		// All \e (ESC) characters in the sequence must be doubled
-		return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
-	return output
-}
-
-// getTmuxEscapeSequences returns the appropriate escape sequences for tmux mode
-func getTmuxEscapeSequences() (start, escape, end string) {
-	if inTmux() {
-		return "\x1bPtmux;", "\x1b\x1b", "\x1b\\"
-	}
-	return "", "\x1b", ""
 }
 
 // ResizeImage resizes an image to the given width and height.

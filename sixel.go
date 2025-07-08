@@ -226,17 +226,17 @@ func DetectSixelFromEnvironment() bool {
 		if strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm") {
 			return true
 		}
-		
+
 		// Check for WezTerm (supports Sixel)
 		if os.Getenv("WEZTERM_EXECUTABLE") != "" {
 			return true
 		}
-		
+
 		// Check TERM_SESSION_ID for iTerm2 format
 		if os.Getenv("TERM_SESSION_ID") != "" && strings.Contains(os.Getenv("TERM_SESSION_ID"), ":") {
 			return true
 		}
-		
+
 		// Do NOT detect Sixel for Ghostty (it doesn't support Sixel)
 		if os.Getenv("GHOSTTY_RESOURCES_DIR") != "" {
 			return false

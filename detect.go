@@ -3,9 +3,7 @@ package termimg
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -31,37 +29,6 @@ var (
 	cachedFeatures *TerminalFeatures
 	featuresCached bool
 )
-
-// Global cache for tmux passthrough enablement
-var (
-	tmuxPassthroughEnabled bool
-	tmuxPassthroughOnce    sync.Once
-)
-
-// Global variable to force tmux mode
-var (
-	forceTmux      bool
-	forceTmuxMutex sync.RWMutex
-)
-
-// ForceTmux sets the global flag to force tmux passthrough mode
-func ForceTmux(force bool) {
-	forceTmuxMutex.Lock()
-	defer forceTmuxMutex.Unlock()
-	forceTmux = force
-
-	// Enable tmux passthrough when forcing tmux mode
-	if force {
-		enableTmuxPassthrough()
-	}
-}
-
-// IsTmuxForced returns whether tmux mode is being forced
-func IsTmuxForced() bool {
-	forceTmuxMutex.RLock()
-	defer forceTmuxMutex.RUnlock()
-	return forceTmux
-}
 
 // QueryTerminalFeatures performs unified terminal capability detection
 func QueryTerminalFeatures() *TerminalFeatures {
@@ -106,68 +73,45 @@ func detectFeaturesFromEnvironment(features *TerminalFeatures) {
 	termProgram := features.TermProgram
 
 	// Handle tmux/screen - check outer terminal
-	if features.IsTmux || os.Getenv("TERM_PROGRAM") == "tmux" || os.Getenv("TERM_PROGRAM") == "screen" {
+	if features.IsTmux || termProgram == "tmux" || termProgram == "screen" {
 		detectOuterTerminalFeatures(features)
 		// Don't return early - allow fallback detection below
 	}
 
-	// Kitty graphics detection - use dedicated detection functions
-	if DetectKittyFromEnvironment() {
-		features.KittyGraphics = true
-	}
-	
-	// Handle additional protocols for multi-protocol terminals
-	switch termProgram {
-	case "WezTerm":
-		features.ITerm2Graphics = true // WezTerm supports both
-	case "rio":
-		features.ITerm2Graphics = true
-	}
-
-	// Sixel graphics detection - use dedicated detection functions
-	if DetectSixelFromEnvironment() {
-		features.SixelGraphics = true
-	}
-	
-	// Handle additional protocols for multi-protocol terminals
-	switch termProgram {
-	case "iTerm.app":
-		features.ITerm2Graphics = true
-	case "mintty":
-		features.ITerm2Graphics = true
-	}
-
-	// iTerm2 graphics detection
-	switch {
-	case termProgram == "iTerm.app":
-		features.ITerm2Graphics = true
-	case termProgram == "vscode" && os.Getenv("TERM_PROGRAM_VERSION") != "":
-		features.ITerm2Graphics = true
-	case termProgram == "mintty":
-		features.ITerm2Graphics = true
-	case termProgram == "WarpTerminal":
-		features.ITerm2Graphics = true
-	case strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm"):
-		features.ITerm2Graphics = true
-	}
+	// Use dedicated detection functions for each protocol
+	features.KittyGraphics = DetectKittyFromEnvironment()
+	features.SixelGraphics = DetectSixelFromEnvironment()
+	features.ITerm2Graphics = DetectITerm2FromEnvironment()
 
 	// True color support detection
-	switch {
-	case strings.Contains(termName, "truecolor"):
-		features.TrueColor = true
-	case strings.Contains(termName, "24bit"):
-		features.TrueColor = true
-	case termProgram == "iTerm.app":
-		features.TrueColor = true
-	case termProgram == "WezTerm":
-		features.TrueColor = true
-	case strings.Contains(termName, "kitty"):
-		features.TrueColor = true
-	case os.Getenv("COLORTERM") == "truecolor":
-		features.TrueColor = true
-	case os.Getenv("COLORTERM") == "24bit":
-		features.TrueColor = true
+	features.TrueColor = detectTrueColorSupport(termName, termProgram)
+}
+
+// detectTrueColorSupport checks for true color (24-bit) support
+func detectTrueColorSupport(termName, termProgram string) bool {
+	// Check TERM variable
+	if strings.Contains(termName, "truecolor") || strings.Contains(termName, "24bit") {
+		return true
 	}
+
+	// Check COLORTERM environment variable
+	colorterm := os.Getenv("COLORTERM")
+	if colorterm == "truecolor" || colorterm == "24bit" {
+		return true
+	}
+
+	// Check terminal programs known to support true color
+	switch termProgram {
+	case "iTerm.app", "WezTerm", "ghostty", "rio", "mintty", "vscode":
+		return true
+	}
+
+	// Check TERM for kitty
+	if strings.Contains(termName, "kitty") {
+		return true
+	}
+
+	return false
 }
 
 // detectFeaturesFromQueries performs CSI queries for detailed detection
@@ -180,35 +124,33 @@ func detectFeaturesFromQueries(features *TerminalFeatures) {
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	// Try font size query first (most reliable)
-	if width, height, err := queryFontSizeQuick(); err == nil && width > 0 && height > 0 {
+	if width, height, err := queryFontSize(); err == nil && width > 0 && height > 0 {
 		features.FontWidth = width
 		features.FontHeight = height
 	}
 
 	// Try window size query
-	if cols, rows, err := queryWindowSizeQuick(); err == nil && cols > 0 && rows > 0 {
+	if cols, rows, err := queryWindowSize(); err == nil && cols > 0 && rows > 0 {
 		features.WindowCols = cols
 		features.WindowRows = rows
 	}
 
-	// Try Kitty query if not already detected
+	// Try protocol queries if not already detected from environment
 	if !features.KittyGraphics {
 		features.KittyGraphics = DetectKittyFromQuery()
 	}
 
-	// Try Sixel query if not already detected
 	if !features.SixelGraphics {
 		features.SixelGraphics = DetectSixelFromQuery()
 	}
 
-	// Try iTerm2 query if not already detected
 	if !features.ITerm2Graphics {
-		features.ITerm2Graphics = queryITerm2Support()
+		features.ITerm2Graphics = DetectITerm2FromReportCellSize() || DetectITerm2FromReportVariable()
 	}
 }
 
-// Quick query functions with short timeouts
-func queryFontSizeQuick() (width, height int, err error) {
+// queryFontSize query functions with short timeouts
+func queryFontSize() (width, height int, err error) {
 	query := "\x1b[16t"
 	if inTmux() {
 		query = "\x1bPtmux;\x1b\x1b[16t\x1b\\"
@@ -238,7 +180,8 @@ func queryFontSizeQuick() (width, height int, err error) {
 	}
 }
 
-func queryWindowSizeQuick() (cols, rows int, err error) {
+// queryWindowSize queries the terminal for its current window size
+func queryWindowSize() (cols, rows int, err error) {
 	fmt.Print("\x1b[18t") // Query window size in characters
 
 	responseChan := make(chan [2]int, 1)
@@ -274,32 +217,6 @@ func queryWindowSizeQuick() (cols, rows int, err error) {
 	}
 }
 
-
-
-func queryITerm2Support() bool {
-	// Try environment-based detection first (fastest)
-	if DetectITerm2FromEnvironment() {
-		return true
-	}
-	
-	// If environment detection fails, try query-based detection
-	// This is more reliable but slower and requires terminal interaction
-	if isInteractiveTerminal() {
-		// Try ReportCellSize first (simpler query)
-		if DetectITerm2FromReportCellSize() {
-			return true
-		}
-		
-		// Try ReportVariable as fallback
-		if DetectITerm2FromReportVariable() {
-			return true
-		}
-	}
-	
-	return false
-}
-
-
 // KittySupported checks if the current terminal supports Kitty graphics protocol
 func KittySupported() bool {
 	return QueryTerminalFeatures().KittyGraphics
@@ -321,18 +238,7 @@ func HalfblocksSupported() bool {
 	return true
 }
 
-// Helper functions referenced in the code
-
-// inTmux checks if running inside tmux or if tmux mode is forced
-func inTmux() bool {
-	// Check if tmux mode is forced
-	if IsTmuxForced() {
-		return true
-	}
-
-	// Check actual tmux environment
-	return os.Getenv("TMUX") != "" || os.Getenv("TERM_PROGRAM") == "tmux"
-}
+/* HELPER FUNCTIONS */
 
 // inScreen checks if running inside GNU Screen
 func inScreen() bool {
@@ -383,127 +289,9 @@ func parseFontSizeResponse(response string) (width, height int) {
 
 // detectOuterTerminalFeatures detects outer terminal capabilities when in tmux/screen
 func detectOuterTerminalFeatures(features *TerminalFeatures) {
-	// In tmux, environment variables are only hints about the outer terminal
-	// We need to be conservative and only enable protocols that are likely to work
-
-	// Strong indicators (protocol-specific environment variables)
-
-	// Kitty detection - use dedicated detection functions
-	if DetectKittyFromEnvironment() {
-		features.KittyGraphics = true
-	}
-
-	// Ghostty detection - don't trust GHOSTTY_RESOURCES_DIR in tmux
-	// as it's just a hint about the outer terminal, not a guarantee it will work
-
-	// iTerm2 detection
-	if os.Getenv("ITERM_SESSION_ID") != "" {
-		features.ITerm2Graphics = true
-		features.SixelGraphics = true // iTerm2 supports both
-	}
-
-	// LC_TERMINAL check for iTerm2
-	if strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm") {
-		features.ITerm2Graphics = true
-		features.SixelGraphics = true
-	}
-
-	// iTerm2 specific: Check TERM_SESSION_ID which persists in tmux
-	if os.Getenv("TERM_SESSION_ID") != "" && strings.Contains(os.Getenv("TERM_SESSION_ID"), ":") {
-		// iTerm2 uses format like "w0t0p0:UUID"
-		features.ITerm2Graphics = true
-		features.SixelGraphics = true
-	}
-
-	// WezTerm detection - WEZTERM_EXECUTABLE is reliable
-	if os.Getenv("WEZTERM_EXECUTABLE") != "" {
-		features.ITerm2Graphics = true
-		features.KittyGraphics = true
-		features.SixelGraphics = true
-	}
-
-	// Sixel detection - use dedicated detection functions
-	if DetectSixelFromEnvironment() {
-		features.SixelGraphics = true
-	}
-
-	// Weak indicators (general terminal program hints)
-	// These are less reliable in tmux but worth checking
-
-	// Only trust TERM_PROGRAM if it's not "tmux" (current program)
-	termProgram := os.Getenv("TERM_PROGRAM")
-	if termProgram != "tmux" && termProgram != "screen" {
-		switch termProgram {
-		case "iTerm.app":
-			features.ITerm2Graphics = true
-		case "WezTerm":
-			features.ITerm2Graphics = true
-			features.KittyGraphics = true
-		case "mintty":
-			features.ITerm2Graphics = true
-		case "vscode":
-			features.ITerm2Graphics = true
-		case "Tabby":
-			features.ITerm2Graphics = true
-		case "Hyper":
-			features.ITerm2Graphics = true
-		case "rio":
-			features.ITerm2Graphics = true
-			features.KittyGraphics = true
-		case "Bobcat":
-			features.ITerm2Graphics = true
-		}
-	}
-
-	// Conservative fallback: Default to Sixel only if no specific protocol detected
-	// and we're not in a known non-Sixel terminal like Ghostty
-	if !features.KittyGraphics && !features.ITerm2Graphics && !features.SixelGraphics {
-		// Only enable Sixel fallback if we're not in Ghostty
-		if os.Getenv("GHOSTTY_RESOURCES_DIR") == "" {
-			features.SixelGraphics = true // Sixel is widely supported and works well with tmux
-		}
-	}
-}
-
-// detectOuterTerminalProtocol detects the outer terminal protocol when in tmux/screen
-// Deprecated: Use detectOuterTerminalFeatures instead
-func detectOuterTerminalProtocol() Protocol {
-	features := &TerminalFeatures{}
-	detectOuterTerminalFeatures(features)
-
-	// Return first detected protocol for backward compatibility
-	if features.KittyGraphics {
-		return Kitty
-	}
-	if features.ITerm2Graphics {
-		return ITerm2
-	}
-	if features.SixelGraphics {
-		return Sixel
-	}
-
-	return Sixel // Default fallback
-}
-
-// enableTmuxPassthrough enables tmux passthrough for graphics protocols
-// required for graphics protocols to work properly in tmux
-func enableTmuxPassthrough() {
-	tmuxPassthroughOnce.Do(func() {
-		// -p flag sets the option for the current pane only
-		cmd := exec.Command("tmux", "set", "-p", "allow-passthrough", "on")
-
-		// silence outputs
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-
-		if err := cmd.Run(); err == nil {
-			tmuxPassthroughEnabled = true
-		}
-	})
-}
-
-// IsTmuxPassthroughEnabled returns whether tmux passthrough was successfully enabled
-func IsTmuxPassthroughEnabled() bool {
-	return tmuxPassthroughEnabled
+	// In tmux, use the dedicated detection functions which handle tmux logic internally
+	// Each protocol file now contains the logic for detecting through tmux
+	features.KittyGraphics = DetectKittyFromEnvironment()
+	features.SixelGraphics = DetectSixelFromEnvironment()
+	features.ITerm2Graphics = DetectITerm2FromEnvironment()
 }

@@ -11,6 +11,7 @@ Main features:
 
   - Automatic detection of supported terminal image protocols
   - Support for Kitty, Sixel, iTerm2, and Unicode halfblock protocols
+  - Tmux passthrough support for graphics protocols in terminal multiplexers
   - Fluent API for easy configuration
   - Advanced features like scaling, dithering, z-index, virtual images
   - TUI framework integration (Bubbletea)
@@ -20,13 +21,13 @@ Basic Usage:
 
 	// Simple one-liner
 	termimg.PrintFile("image.png")
-	
+
 	// With configuration
 	img, err := termimg.Open("image.png")
 	if err != nil {
 	    log.Fatal(err)
 	}
-	
+
 	err = img.Width(80).Height(40).Print()
 	if err != nil {
 	    log.Fatal(err)
@@ -46,6 +47,7 @@ Fluent API:
 
 Protocol Detection:
 
+	// Detect the best available protocol
 	protocol := termimg.DetectProtocol()
 	switch protocol {
 	case termimg.Kitty:
@@ -59,6 +61,30 @@ Protocol Detection:
 	default:
 	    fmt.Println("No supported protocol detected")
 	}
+
+	// Check specific protocol support
+	if termimg.KittySupported() {
+	    fmt.Println("Kitty protocol available")
+	}
+	if termimg.SixelSupported() {
+	    fmt.Println("Sixel protocol available")
+	}
+	if termimg.ITerm2Supported() {
+	    fmt.Println("iTerm2 protocol available")
+	}
+
+	// Get all supported protocols
+	protocols := termimg.DetermineProtocols()
+	fmt.Printf("Available protocols: %v\n", protocols)
+
+Tmux Support:
+
+	// Force tmux mode for testing
+	termimg.ForceTmux(true)
+
+	// Graphics protocols automatically work in tmux via passthrough
+	img, _ := termimg.Open("image.png")
+	img.Print() // Automatically uses tmux passthrough when needed
 
 TUI Integration:
 

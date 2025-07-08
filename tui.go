@@ -32,7 +32,7 @@ func NewImageWidgetFromFile(path string) (*ImageWidget, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return NewImageWidget(img), nil
 }
 
@@ -82,26 +82,26 @@ func (w *ImageWidget) Render() (string, error) {
 	if !w.needsUpdate && w.rendered != "" {
 		return w.rendered, nil
 	}
-	
+
 	// Configure the image with widget settings
 	img := w.image.Protocol(w.protocol)
-	
+
 	if w.width > 0 {
 		img = img.Width(w.width)
 	}
 	if w.height > 0 {
 		img = img.Height(w.height)
 	}
-	
+
 	// Render the image
 	output, err := img.Render()
 	if err != nil {
 		return "", fmt.Errorf("failed to render image widget: %w", err)
 	}
-	
+
 	w.rendered = output
 	w.needsUpdate = false
-	
+
 	return output, nil
 }
 
@@ -174,42 +174,42 @@ func (g *ImageGallery) Render() (string, error) {
 	if len(g.images) == 0 {
 		return "", nil
 	}
-	
+
 	var output strings.Builder
-	
+
 	// Calculate grid layout
 	rows := (len(g.images) + g.columns - 1) / g.columns
-	
+
 	for row := 0; row < rows; row++ {
 		// Render each image in the row
 		var imageOutputs []string
 		maxLines := 0
-		
+
 		for col := 0; col < g.columns; col++ {
 			idx := row*g.columns + col
 			if idx >= len(g.images) {
 				break
 			}
-			
+
 			imageOutput, err := g.images[idx].Render()
 			if err != nil {
 				return "", fmt.Errorf("failed to render image %d: %w", idx, err)
 			}
-			
+
 			imageOutputs = append(imageOutputs, imageOutput)
-			
+
 			// Count lines for alignment
 			lines := strings.Count(imageOutput, "\n") + 1
 			if lines > maxLines {
 				maxLines = lines
 			}
 		}
-		
+
 		// Combine images horizontally
 		if len(imageOutputs) > 0 {
 			combined := combineImagesHorizontally(imageOutputs, g.spacing, maxLines)
 			output.WriteString(combined)
-			
+
 			// Add spacing between rows
 			if row < rows-1 {
 				for i := 0; i < g.spacing; i++ {
@@ -218,7 +218,7 @@ func (g *ImageGallery) Render() (string, error) {
 			}
 		}
 	}
-	
+
 	return output.String(), nil
 }
 
@@ -227,21 +227,21 @@ func combineImagesHorizontally(images []string, spacing int, maxLines int) strin
 	if len(images) == 0 {
 		return ""
 	}
-	
+
 	// Split each image into lines
 	imageLinesSet := make([][]string, len(images))
 	for i, img := range images {
 		imageLinesSet[i] = strings.Split(img, "\n")
-		
+
 		// Pad to maxLines
 		for len(imageLinesSet[i]) < maxLines {
 			imageLinesSet[i] = append(imageLinesSet[i], "")
 		}
 	}
-	
+
 	var result strings.Builder
 	spacingStr := strings.Repeat(" ", spacing)
-	
+
 	// Combine line by line
 	for line := 0; line < maxLines; line++ {
 		for i, imageLines := range imageLinesSet {
@@ -256,7 +256,7 @@ func combineImagesHorizontally(images []string, spacing int, maxLines int) strin
 			result.WriteString("\n")
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -292,9 +292,9 @@ func (h *TUIHelper) ShowProtocolWarning(protocol Protocol) string {
 	if h.warningsShown[protocol] {
 		return ""
 	}
-	
+
 	h.warningsShown[protocol] = true
-	
+
 	switch protocol {
 	case Kitty:
 		return "ℹ️  Using Kitty protocol - images will display in terminal"
@@ -312,7 +312,7 @@ func (h *TUIHelper) ShowProtocolWarning(protocol Protocol) string {
 // CreateImageWidget creates a properly configured image widget
 func (h *TUIHelper) CreateImageWidget(img *Image, width, height int) *ImageWidget {
 	protocol := h.GetBestProtocol()
-	
+
 	return NewImageWidget(img).
 		SetSize(width, height).
 		SetProtocol(protocol)
@@ -321,7 +321,7 @@ func (h *TUIHelper) CreateImageWidget(img *Image, width, height int) *ImageWidge
 // CreateImageGallery creates a properly configured image gallery
 func (h *TUIHelper) CreateImageGallery(columns int, imageWidth, imageHeight int) *ImageGallery {
 	protocol := h.GetBestProtocol()
-	
+
 	return NewImageGallery(columns).
 		SetProtocol(protocol).
 		SetImageSize(imageWidth, imageHeight)
