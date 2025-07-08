@@ -15,13 +15,13 @@ demo:
 	go run ./cmd/demo/main.go
 
 PROTOCOL ?=
+FORCE_TMUX ?=
 
 .PHONY: debug
 debug:
 	@echo "🚀 Starting dlv debug server on :2345"
 	@echo "VSCode debugger can now attach to localhost:2345"
-	dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat-simple/main.go -- -protocol $(PROTOCOL) -clear -dither -w 200 -H 151 ./test/image_smol.png
-	# dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat-simple/main.go -- -protocol $(PROTOCOL) -clear -dither -scale fit -w 200 -H 151 ./test/image_smol.png
+	dlv debug --headless --listen=:2345 --api-version=2 ./cmd/imgcat/main.go -- -P $(PROTOCOL) $(FORCE_TMUX) --clear --dither -W 200 -H 151 ./test/image_smol.png
 
 .PHONY: debug-auto
 debug-auto: PROTOCOL := auto
@@ -33,6 +33,10 @@ debug-kitty: debug
 
 .PHONY: debug-iterm
 debug-iterm: PROTOCOL := iterm
+debug-iterm: debug
+
+.PHONY: debug-iterm
+debug-iterm: PROTOCOL := iterm FORCE_TMUX := --tmux
 debug-iterm: debug
 
 .PHONY: debug-sixel
