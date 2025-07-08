@@ -124,30 +124,17 @@ func detectFeaturesFromEnvironment(features *TerminalFeatures) {
 		features.ITerm2Graphics = true
 	}
 
-	// Sixel graphics detection
-	switch {
-	case strings.Contains(termName, "sixel"):
+	// Sixel graphics detection - use dedicated detection functions
+	if DetectSixelFromEnvironment() {
 		features.SixelGraphics = true
-	case strings.Contains(termName, "mlterm"):
-		features.SixelGraphics = true
-	case strings.Contains(termName, "foot"):
-		features.SixelGraphics = true
-	case strings.Contains(termName, "wezterm"):
-		features.SixelGraphics = true
-	case strings.Contains(termName, "alacritty"):
-		features.SixelGraphics = true
-	case strings.Contains(termName, "xterm") && os.Getenv("XTERM_VERSION") != "":
-		features.SixelGraphics = true
-	case termProgram == "iTerm.app":
-		features.SixelGraphics = true
+	}
+	
+	// Handle additional protocols for multi-protocol terminals
+	switch termProgram {
+	case "iTerm.app":
 		features.ITerm2Graphics = true
-	case termProgram == "mintty":
-		features.SixelGraphics = true
+	case "mintty":
 		features.ITerm2Graphics = true
-	case termProgram == "WezTerm":
-		features.SixelGraphics = true
-	case termProgram == "rio":
-		features.SixelGraphics = true
 	}
 
 	// iTerm2 graphics detection
@@ -211,7 +198,7 @@ func detectFeaturesFromQueries(features *TerminalFeatures) {
 
 	// Try Sixel query if not already detected
 	if !features.SixelGraphics {
-		features.SixelGraphics = querySixelSupport()
+		features.SixelGraphics = DetectSixelFromQuery()
 	}
 
 	// Try iTerm2 query if not already detected
@@ -288,29 +275,6 @@ func queryWindowSizeQuick() (cols, rows int, err error) {
 }
 
 
-func querySixelSupport() bool {
-	fmt.Print("\x1b[c") // Primary Device Attributes
-
-	responseChan := make(chan bool, 1)
-	go func() {
-		buf := make([]byte, 64)
-		n, err := os.Stdin.Read(buf)
-		if err == nil && n > 0 {
-			response := string(buf[:n])
-			// Look for ";4;" or ";4c" indicating Sixel capability
-			responseChan <- (strings.Contains(response, ";4;") || strings.Contains(response, ";4c"))
-		} else {
-			responseChan <- false
-		}
-	}()
-
-	select {
-	case result := <-responseChan:
-		return result
-	case <-time.After(80 * time.Millisecond):
-		return false
-	}
-}
 
 func queryITerm2Support() bool {
 	// Try environment-based detection first (fastest)
@@ -458,6 +422,11 @@ func detectOuterTerminalFeatures(features *TerminalFeatures) {
 		features.SixelGraphics = true
 	}
 
+	// Sixel detection - use dedicated detection functions
+	if DetectSixelFromEnvironment() {
+		features.SixelGraphics = true
+	}
+
 	// Weak indicators (general terminal program hints)
 	// These are less reliable in tmux but worth checking
 
@@ -467,14 +436,11 @@ func detectOuterTerminalFeatures(features *TerminalFeatures) {
 		switch termProgram {
 		case "iTerm.app":
 			features.ITerm2Graphics = true
-			features.SixelGraphics = true
 		case "WezTerm":
 			features.ITerm2Graphics = true
 			features.KittyGraphics = true
-			features.SixelGraphics = true
 		case "mintty":
 			features.ITerm2Graphics = true
-			features.SixelGraphics = true
 		case "vscode":
 			features.ITerm2Graphics = true
 		case "Tabby":
@@ -490,9 +456,12 @@ func detectOuterTerminalFeatures(features *TerminalFeatures) {
 	}
 
 	// Conservative fallback: Default to Sixel only if no specific protocol detected
-	// Sixel has the best chance of working through tmux passthrough
+	// and we're not in a known non-Sixel terminal like Ghostty
 	if !features.KittyGraphics && !features.ITerm2Graphics && !features.SixelGraphics {
-		features.SixelGraphics = true // Sixel is widely supported and works well with tmux
+		// Only enable Sixel fallback if we're not in Ghostty
+		if os.Getenv("GHOSTTY_RESOURCES_DIR") == "" {
+			features.SixelGraphics = true // Sixel is widely supported and works well with tmux
+		}
 	}
 }
 

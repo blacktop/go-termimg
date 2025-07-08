@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-sixel"
+	"golang.org/x/term"
 )
 
 // SixelClearMode defines how sixel images should be cleared
@@ -178,4 +180,135 @@ func (r *SixelRenderer) buildPreciseClearSequence(height int) string {
 	result.WriteString("\r")
 
 	return result.String()
+}
+
+/* DETECTION FUNCTIONS */
+
+// DetectSixelFromEnvironment checks environment variables for Sixel indicators
+func DetectSixelFromEnvironment() bool {
+	termName := strings.ToLower(os.Getenv("TERM"))
+	termProgram := os.Getenv("TERM_PROGRAM")
+
+	// Check TERM variable for Sixel support
+	switch {
+	case strings.Contains(termName, "sixel"):
+		return true
+	case strings.Contains(termName, "mlterm"):
+		return true
+	case strings.Contains(termName, "foot"):
+		return true
+	case strings.Contains(termName, "wezterm"):
+		return true
+	case strings.Contains(termName, "alacritty"):
+		return true
+	case strings.Contains(termName, "xterm") && os.Getenv("XTERM_VERSION") != "":
+		return true
+	}
+
+	// Check TERM_PROGRAM for Sixel support
+	switch termProgram {
+	case "iTerm.app":
+		return true
+	case "mintty":
+		return true
+	case "WezTerm":
+		return true
+	case "rio":
+		return true
+	}
+
+	// When in tmux, check for outer terminal hints
+	if inTmux() {
+		// Check for iTerm2 indicators (iTerm2 supports Sixel)
+		if os.Getenv("ITERM_SESSION_ID") != "" {
+			return true
+		}
+		if strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm") {
+			return true
+		}
+		
+		// Check for WezTerm (supports Sixel)
+		if os.Getenv("WEZTERM_EXECUTABLE") != "" {
+			return true
+		}
+		
+		// Check TERM_SESSION_ID for iTerm2 format
+		if os.Getenv("TERM_SESSION_ID") != "" && strings.Contains(os.Getenv("TERM_SESSION_ID"), ":") {
+			return true
+		}
+		
+		// Do NOT detect Sixel for Ghostty (it doesn't support Sixel)
+		if os.Getenv("GHOSTTY_RESOURCES_DIR") != "" {
+			return false
+		}
+	}
+
+	return false
+}
+
+// DetectSixelFromQuery uses Device Attributes query to detect Sixel support
+func DetectSixelFromQuery() bool {
+	return querySixelDeviceAttributes()
+}
+
+// querySixelDeviceAttributes sends a Device Attributes query to detect Sixel support
+func querySixelDeviceAttributes() bool {
+	// Skip query-based detection if we already know it's not supported
+	termProgram := os.Getenv("TERM_PROGRAM")
+	if termProgram == "ghostty" {
+		return false
+	}
+
+	// Open controlling terminal directly to avoid visible output
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return false // Can't open tty, fall back to env detection
+	}
+	defer tty.Close()
+
+	// Check if we're in an interactive terminal
+	if !term.IsTerminal(int(tty.Fd())) {
+		return false
+	}
+
+	// Save terminal state and enter raw mode
+	oldState, err := term.MakeRaw(int(tty.Fd()))
+	if err != nil {
+		return false
+	}
+	defer term.Restore(int(tty.Fd()), oldState)
+
+	// Send Device Attributes query: ESC [ c
+	query := "\x1b[c"
+
+	// Wrap for tmux passthrough if needed
+	if inTmux() {
+		query = wrapTmuxPassthrough(query)
+	}
+
+	// Send query to terminal device directly
+	if _, err := tty.WriteString(query); err != nil {
+		return false // Fail silently to avoid polluting output
+	}
+
+	// Read response with timeout
+	responseChan := make(chan bool, 1)
+	go func() {
+		buf := make([]byte, 64)
+		n, err := tty.Read(buf)
+		if err == nil && n > 0 {
+			response := string(buf[:n])
+			// Look for ";4;" or ";4c" indicating Sixel capability
+			responseChan <- (strings.Contains(response, ";4;") || strings.Contains(response, ";4c"))
+		} else {
+			responseChan <- false
+		}
+	}()
+
+	select {
+	case result := <-responseChan:
+		return result
+	case <-time.After(200 * time.Millisecond):
+		return false
+	}
 }
