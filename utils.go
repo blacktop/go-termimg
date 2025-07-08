@@ -564,10 +564,6 @@ func QueryDeviceAttributes() (primary, secondary []int, err error) {
 // Helper functions for environment detection - these reference existing functions
 
 // inTmux is already defined in renderers.go
-// inScreen checks if running inside GNU Screen
-func inScreen() bool {
-	return strings.HasPrefix(os.Getenv("TERM"), "screen")
-}
 
 // isInteractiveTerminal is already defined in renderers.go
 // getFontSizeFallback is already defined in renderers.go
