@@ -53,29 +53,29 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 
 	data := buf.Bytes()
 
-	// Calculate character dimensions for ECH clearing
+	// Calculate character dimensions for ECH clearing using cached font size
 	var charWidth, charHeight int
 	if opts.Width > 0 {
 		charWidth = opts.Width
 	} else {
-		// Estimate character width from pixels (default 8px per char)
-		fontW, _ := getTerminalFontSize()
+		// Estimate character width from pixels using cached font size
+		fontW := opts.features.FontWidth
 		if fontW > 0 {
 			charWidth = (pixelWidth + fontW - 1) / fontW // Round up
 		} else {
-			charWidth = (pixelWidth + 7) / 8 // Default 8px per char
+			charWidth = (pixelWidth + 7) / 8 // Default 8px per char fallback
 		}
 	}
 
 	if opts.Height > 0 {
 		charHeight = opts.Height
 	} else {
-		// Estimate character height from pixels (default 16px per char)
-		_, fontH := getTerminalFontSize()
+		// Estimate character height from pixels using cached font size
+		fontH := opts.features.FontHeight
 		if fontH > 0 {
 			charHeight = (pixelHeight + fontH - 1) / fontH // Round up
 		} else {
-			charHeight = (pixelHeight + 15) / 16 // Default 16px per char
+			charHeight = (pixelHeight + 15) / 16 // Default 16px per char fallback
 		}
 	}
 
@@ -236,14 +236,8 @@ func DetectITerm2FromEnvironment() bool {
 	return false
 }
 
-// DetectITerm2FromReportCellSize uses OSC 1337 ReportCellSize query to detect iTerm2
-func DetectITerm2FromReportCellSize() bool {
-	return queryITerm2ReportCellSize()
-}
-
-// DetectITerm2FromReportVariable uses OSC 1337 ReportVariable query to detect iTerm2
-func DetectITerm2FromReportVariable() bool {
-	return queryITerm2ReportVariable()
+func DetectITerm2FromQuery() bool {
+	return queryITerm2ReportCellSize() || queryITerm2ReportVariable()
 }
 
 // GetITerm2CellSize uses OSC 1337 ReportCellSize to get font dimensions
@@ -281,6 +275,35 @@ func GetITerm2CellSize() (float64, float64, float64, bool) {
 
 	success := queryITerm2(query, validator)
 	return width, height, scale, success
+}
+
+// queryITerm2ReportCellSize sends OSC 1337 ReportCellSize query and parses response
+func queryITerm2ReportCellSize() bool {
+	// Send ReportCellSize query: ESC ] 1337 ; ReportCellSize BEL
+	query := "\x1b]1337;ReportCellSize\x07"
+
+	// Response validator for ReportCellSize
+	validator := func(response string) bool {
+		// iTerm2 responds with OSC 1337;ReportCellSize=width;height;scale
+		return strings.Contains(response, "1337") && strings.Contains(response, "ReportCellSize=")
+	}
+
+	return queryITerm2(query, validator)
+}
+
+// queryITerm2ReportVariable sends OSC 1337 ReportVariable query and parses response
+func queryITerm2ReportVariable() bool {
+	// Send ReportVariable query for session.name
+	// Variable name "session.name" encoded in base64: c2Vzc2lvbi5uYW1l
+	query := "\x1b]1337;ReportVariable=c2Vzc2lvbi5uYW1l\x07"
+
+	// Response validator for ReportVariable
+	validator := func(response string) bool {
+		// iTerm2 responds with OSC 1337;ReportVariable=base64_name=base64_value
+		return strings.Contains(response, "1337") && strings.Contains(response, "ReportVariable")
+	}
+
+	return queryITerm2(query, validator)
 }
 
 // queryITerm2 is a helper function that sends an iTerm2 query and checks for a response
@@ -345,33 +368,4 @@ func queryITerm2(query string, responseValidator func(string) bool) bool {
 	case <-time.After(200 * time.Millisecond):
 		return false
 	}
-}
-
-// queryITerm2ReportCellSize sends OSC 1337 ReportCellSize query and parses response
-func queryITerm2ReportCellSize() bool {
-	// Send ReportCellSize query: ESC ] 1337 ; ReportCellSize BEL
-	query := "\x1b]1337;ReportCellSize\x07"
-
-	// Response validator for ReportCellSize
-	validator := func(response string) bool {
-		// iTerm2 responds with OSC 1337;ReportCellSize=width;height;scale
-		return strings.Contains(response, "1337") && strings.Contains(response, "ReportCellSize=")
-	}
-
-	return queryITerm2(query, validator)
-}
-
-// queryITerm2ReportVariable sends OSC 1337 ReportVariable query and parses response
-func queryITerm2ReportVariable() bool {
-	// Send ReportVariable query for session.name
-	// Variable name "session.name" encoded in base64: c2Vzc2lvbi5uYW1l
-	query := "\x1b]1337;ReportVariable=c2Vzc2lvbi5uYW1l\x07"
-
-	// Response validator for ReportVariable
-	validator := func(response string) bool {
-		// iTerm2 responds with OSC 1337;ReportVariable=base64_name=base64_value
-		return strings.Contains(response, "1337") && strings.Contains(response, "ReportVariable")
-	}
-
-	return queryITerm2(query, validator)
 }

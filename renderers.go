@@ -7,7 +7,6 @@ import (
 	"image/color/palette"
 	"image/draw"
 	"os"
-	"time"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/term"
@@ -73,8 +72,11 @@ func resizeImage(img image.Image, opts RenderOptions) image.Image {
 		}
 	}
 
-	// Get terminal font dimensions for accurate sizing
-	fontW, fontH := getTerminalFontSize()
+	// Get terminal font dimensions for accurate sizing from cached features
+	fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
+	if fontW <= 0 || fontH <= 0 {
+		fontW, fontH = 8, 16 // Fallback values
+	}
 
 	// Convert character cells to pixels
 	// For halfblocks, each character cell represents 1 pixel width and 2 pixels height
@@ -156,80 +158,6 @@ func getDitherPalette(mode DitherMode) color.Palette {
 		return palette.Plan9
 	default:
 		return palette.WebSafe
-	}
-}
-
-var (
-	// Cache font size to avoid repeated calculations
-	cachedFontW, cachedFontH int
-	fontCacheInitialized     bool
-)
-
-// getTerminalFontSize returns the terminal's font width and height in pixels
-func getTerminalFontSize() (width, height int) {
-	if !fontCacheInitialized {
-		// Try to query the terminal for actual font size
-		if w, h := queryTerminalFontSize(); w > 0 && h > 0 {
-			cachedFontW, cachedFontH = w, h
-		} else {
-			// Fallback to common defaults based on terminal type
-			cachedFontW, cachedFontH = getFontSizeFallback()
-		}
-		fontCacheInitialized = true
-	}
-	return cachedFontW, cachedFontH
-}
-
-// queryTerminalFontSize queries the terminal for actual font size in pixels
-func queryTerminalFontSize() (width, height int) {
-	// Only query if we're in an interactive terminal
-	if !isInteractiveTerminal() {
-		return 0, 0
-	}
-
-	// Save current terminal state
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return 0, 0
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	// Send font size query escape sequence
-	// CSI 16 t requests the terminal to report the character cell size in pixels
-	query := "\x1b[16t"
-
-	// Handle tmux passthrough if needed
-	if inTmux() {
-		query = "\x1bPtmux;\x1b\x1b[16t\x1b\\"
-	}
-
-	_, err = os.Stdout.WriteString(query)
-	if err != nil {
-		return 0, 0
-	}
-
-	// Set up response channel with timeout
-	responseChan := make(chan [2]int, 1)
-	go func() {
-		buf := make([]byte, 64)
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
-			responseChan <- [2]int{0, 0}
-			return
-		}
-
-		// Parse response: expected format is ESC[6;height;widtht
-		response := string(buf[:n])
-		width, height := parseFontSizeResponse(response)
-		responseChan <- [2]int{width, height}
-	}()
-
-	// Wait for response with timeout
-	select {
-	case result := <-responseChan:
-		return result[0], result[1]
-	case <-time.After(200 * time.Millisecond):
-		return 0, 0
 	}
 }
 

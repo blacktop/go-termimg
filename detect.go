@@ -4,24 +4,29 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/blacktop/go-termimg/pkg/csi"
 	"golang.org/x/term"
 )
 
 // TerminalFeatures represents detected terminal capabilities (simplified from utils.go)
 type TerminalFeatures struct {
+	TermName    string
+	TermProgram string
+	IsTmux      bool
+	IsScreen    bool
+
+	FontWidth  int
+	FontHeight int
+
+	WindowCols int
+	WindowRows int
+
 	KittyGraphics  bool
 	SixelGraphics  bool
 	ITerm2Graphics bool
-	TrueColor      bool
-	FontWidth      int
-	FontHeight     int
-	WindowCols     int
-	WindowRows     int
-	IsTmux         bool
-	TermName       string
-	TermProgram    string
+
+	TrueColor bool
 }
 
 // Global cache for terminal features
@@ -40,6 +45,7 @@ func QueryTerminalFeatures() *TerminalFeatures {
 		TermName:    os.Getenv("TERM"),
 		TermProgram: os.Getenv("TERM_PROGRAM"),
 		IsTmux:      inTmux(),
+		IsScreen:    inScreen(),
 	}
 
 	// Enable tmux passthrough if in tmux environment
@@ -47,18 +53,26 @@ func QueryTerminalFeatures() *TerminalFeatures {
 		enableTmuxPassthrough()
 	}
 
-	// Fast path: environment variable detection
-	detectFeaturesFromEnvironment(features)
+	// Detect supported protocols
+	features.KittyGraphics = KittySupported()
+	features.SixelGraphics = SixelSupported()
+	features.ITerm2Graphics = ITerm2Supported()
 
 	// Try CSI queries if in interactive terminal
 	if isInteractiveTerminal() {
-		detectFeaturesFromQueries(features)
+		features.detectFeaturesFromQueries()
 	}
 
 	// Set font size defaults if not detected
 	if features.FontWidth == 0 || features.FontHeight == 0 {
 		features.FontWidth, features.FontHeight = getFontSizeFallback()
 	}
+
+	// True color support detection
+	features.TrueColor = detectTrueColorSupport(
+		features.TermName,
+		features.TermProgram,
+	)
 
 	// Cache the result
 	cachedFeatures = features
@@ -67,24 +81,33 @@ func QueryTerminalFeatures() *TerminalFeatures {
 	return features
 }
 
-// detectFeaturesFromEnvironment performs fast detection using environment variables
-func detectFeaturesFromEnvironment(features *TerminalFeatures) {
-	termName := strings.ToLower(features.TermName)
-	termProgram := features.TermProgram
-
-	// Handle tmux/screen - check outer terminal
-	if features.IsTmux || termProgram == "tmux" || termProgram == "screen" {
-		detectOuterTerminalFeatures(features)
-		// Don't return early - allow fallback detection below
+// KittySupported checks if the current terminal supports Kitty graphics protocol
+func KittySupported() bool {
+	if DetectKittyFromQuery() {
+		return true
 	}
+	return DetectKittyFromEnvironment()
+}
 
-	// Use dedicated detection functions for each protocol
-	features.KittyGraphics = DetectKittyFromEnvironment()
-	features.SixelGraphics = DetectSixelFromEnvironment()
-	features.ITerm2Graphics = DetectITerm2FromEnvironment()
+// SixelSupported checks if Sixel protocol is supported in the current environment
+func SixelSupported() bool {
+	if DetectSixelFromQuery() {
+		return true
+	}
+	return DetectSixelFromEnvironment()
+}
 
-	// True color support detection
-	features.TrueColor = detectTrueColorSupport(termName, termProgram)
+// ITerm2Supported checks if iTerm2 inline images protocol are supported in the current environment
+func ITerm2Supported() bool {
+	if DetectITerm2FromQuery() {
+		return true
+	}
+	return DetectITerm2FromEnvironment()
+}
+
+// HalfblocksSupported checks if halfblocks rendering is supported (always true as fallback)
+func HalfblocksSupported() bool {
+	return true
 }
 
 // detectTrueColorSupport checks for true color (24-bit) support
@@ -115,139 +138,105 @@ func detectTrueColorSupport(termName, termProgram string) bool {
 }
 
 // detectFeaturesFromQueries performs CSI queries for detailed detection
-func detectFeaturesFromQueries(features *TerminalFeatures) {
+func (tf *TerminalFeatures) detectFeaturesFromQueries() error {
 	// Save current terminal state
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		return // Fall back to environment detection
+		return fmt.Errorf("failed to set terminal to raw mode: %w", err)
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Try font size query first (most reliable)
-	if width, height, err := GetTerminalFontSize(); err == nil && width > 0 && height > 0 {
-		features.FontWidth = width
-		features.FontHeight = height
-	}
-
 	// Try window size query
-	if cols, rows, err := queryWindowSize(); err == nil && cols > 0 && rows > 0 {
-		features.WindowCols = cols
-		features.WindowRows = rows
+	tf.WindowCols, tf.WindowRows, err = csi.QueryWindowSize()
+	if err != nil {
+		return fmt.Errorf("failed to query window size: %w", err)
 	}
 
-	// Try protocol queries if not already detected from environment
-	if !features.KittyGraphics {
-		features.KittyGraphics = DetectKittyFromQuery()
+	// Try font size query
+	tf.FontWidth, tf.FontHeight, err = tf.GetTerminalFontSize()
+	if err != nil {
+		return fmt.Errorf("failed to query font size: %w", err)
 	}
 
-	if !features.SixelGraphics {
-		features.SixelGraphics = DetectSixelFromQuery()
-	}
-
-	if !features.ITerm2Graphics {
-		features.ITerm2Graphics = DetectITerm2FromReportCellSize() || DetectITerm2FromReportVariable()
-	}
+	return nil
 }
 
 // GetTerminalFontSize query functions with short timeouts
-func GetTerminalFontSize() (width, height int, err error) {
-	query := "\x1b[16t"
-	if inTmux() {
-		query = "\x1bPtmux;\x1b\x1b[16t\x1b\\"
-	}
-
-	fmt.Print(query)
-
-	responseChan := make(chan [2]int, 1)
-	go func() {
-		buf := make([]byte, 64)
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
-			responseChan <- [2]int{0, 0}
-			return
+func (tf *TerminalFeatures) GetTerminalFontSize() (width, height int, err error) {
+	switch {
+	case tf.ITerm2Graphics:
+		// Use iTerm2's ReportCellSize
+		w, h, _, ok := GetITerm2CellSize()
+		if ok {
+			return int(w), int(h), nil
 		}
 
-		response := string(buf[:n])
-		w, h := parseFontSizeResponse(response)
-		responseChan <- [2]int{w, h}
-	}()
-
-	select {
-	case result := <-responseChan:
-		return result[0], result[1], nil
-	case <-time.After(100 * time.Millisecond):
-		return 0, 0, fmt.Errorf("timeout")
-	}
-}
-
-// queryWindowSize queries the terminal for its current window size
-func queryWindowSize() (cols, rows int, err error) {
-	fmt.Print("\x1b[18t") // Query window size in characters
-
-	responseChan := make(chan [2]int, 1)
-	go func() {
-		buf := make([]byte, 32)
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
-			responseChan <- [2]int{0, 0}
-			return
+	case tf.KittyGraphics:
+		if fontW, fontH, ok := csi.QueryFontSize(); ok {
+			return fontW, fontH, nil
 		}
+		// Try CSI 16t as fallback
+		if w, h, ok := csi.QueryCharacterCellSizeInPixels(); ok {
+			return w, h, nil
+		}
+	case tf.SixelGraphics:
+		// These terminals typically support CSI 16t
+		w, h, ok := csi.QueryCharacterCellSizeInPixels()
+		if ok {
+			return w, h, nil
+		}
+	}
 
-		response := string(buf[:n])
-		// Parse response: \x1b[8;rows;cols;t
-		if strings.Contains(response, "[8;") {
-			parts := strings.Split(response, ";")
-			if len(parts) >= 3 {
-				if r, err := fmt.Sscanf(parts[1], "%d", &rows); r == 1 && err == nil {
-					if c, err := fmt.Sscanf(parts[2], "%d", &cols); c == 1 && err == nil {
-						responseChan <- [2]int{cols, rows}
-						return
-					}
-				}
+	// Check for specific terminal types by TERM variable
+	switch tf.TermName {
+	case "xterm":
+		// Try XTSMGRAPHICS first for modern xterm
+		if w, h, ok := csi.QueryXTSMGRAPHICS(); ok {
+			// XTSMGRAPHICS returns Sixel dimensions, need to calculate font size
+			// Try getting character dimensions to calculate
+			cols, rows, ok := csi.QueryCharacterCellSizeInPixels()
+			if ok && cols > 0 && rows > 0 {
+				return w / cols, h / rows, nil
 			}
 		}
-		responseChan <- [2]int{0, 0}
-	}()
+		// Fall back to CSI 16t
+		if w, h, ok := csi.QueryCharacterCellSizeInPixels(); ok {
+			return w, h, nil
+		}
 
-	select {
-	case result := <-responseChan:
-		return result[0], result[1], nil
-	case <-time.After(100 * time.Millisecond):
-		return 0, 0, fmt.Errorf("timeout")
+	case "mlterm":
+		// mlterm supports CSI 16t
+		if w, h, ok := csi.QueryCharacterCellSizeInPixels(); ok {
+			return w, h, nil
+		}
+
+	case "foot":
+		// foot terminal supports CSI 16t
+		if w, h, ok := csi.QueryCharacterCellSizeInPixels(); ok {
+			return w, h, nil
+		}
+
+	case "wezterm":
+		// WezTerm supports CSI 16t
+		if w, h, ok := csi.QueryCharacterCellSizeInPixels(); ok {
+			return w, h, nil
+		}
 	}
-}
 
-// KittySupported checks if the current terminal supports Kitty graphics protocol
-func KittySupported() bool {
-	return QueryTerminalFeatures().KittyGraphics
-}
+	// Try generic methods as fallback
+	// 1. Try CSI 14t + CSI 18t approach
+	if fontW, fontH, ok := csi.QueryFontSize(); ok {
+		return fontW, fontH, nil
+	}
 
-// SixelSupported checks if Sixel protocol is supported in the current environment
-func SixelSupported() bool {
-	return QueryTerminalFeatures().SixelGraphics
-}
+	// 2. Final fallback: try CSI 16t anyway
+	if w, h, ok := csi.QueryCharacterCellSizeInPixels(); ok {
+		return w, h, nil
+	}
 
-// ITerm2Supported checks if iTerm2 inline images protocol are supported in the current environment
-func ITerm2Supported() bool {
-	return QueryTerminalFeatures().ITerm2Graphics
-}
+	w, h := getFontSizeFallback() // DUMB
 
-// HalfblocksSupported checks if halfblocks rendering is supported (always true as fallback)
-func HalfblocksSupported() bool {
-	// Halfblocks is always supported as a fallback
-	return true
-}
-
-/* HELPER FUNCTIONS */
-
-// inScreen checks if running inside GNU Screen
-func inScreen() bool {
-	return strings.HasPrefix(os.Getenv("TERM"), "screen")
-}
-
-// isInteractiveTerminal checks if stdin is connected to a terminal
-func isInteractiveTerminal() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
+	return w, h, fmt.Errorf("failed to detect terminal font size: using fallback values %dx%d", w, h)
 }
 
 // getFontSizeFallback returns fallback font dimensions based on environment
@@ -257,6 +246,9 @@ func getFontSizeFallback() (width, height int) {
 
 	// Adjust based on terminal type
 	termProgram := os.Getenv("TERM_PROGRAM")
+	termName := strings.ToLower(os.Getenv("TERM"))
+
+	// First check TERM_PROGRAM
 	switch termProgram {
 	case "Apple_Terminal":
 		width, height = 7, 16
@@ -266,32 +258,32 @@ func getFontSizeFallback() (width, height int) {
 		width, height = 9, 18
 	case "WezTerm":
 		width, height = 8, 16
+	case "mintty":
+		width, height = 7, 14
+	case "rio":
+		width, height = 8, 16
+	default:
+		// Check TERM variable for common Sixel-capable terminals
+		switch {
+		case strings.Contains(termName, "xterm"):
+			width, height = 6, 13 // Traditional xterm default
+		case strings.Contains(termName, "mlterm"):
+			width, height = 7, 14
+		case strings.Contains(termName, "foot"):
+			width, height = 8, 16
+		case strings.Contains(termName, "wezterm"):
+			width, height = 8, 16
+		case strings.Contains(termName, "vt340"):
+			width, height = 9, 15 // Historical VT340 dimensions
+		}
 	}
 
 	return width, height
 }
 
-// parseFontSizeResponse parses font size query response
-func parseFontSizeResponse(response string) (width, height int) {
-	// Parse response format: \x1b[6;height;width;t
-	if strings.Contains(response, "[6;") && strings.Contains(response, "t") {
-		parts := strings.Split(response, ";")
-		if len(parts) >= 3 {
-			if h, err := fmt.Sscanf(parts[1], "%d", &height); h == 1 && err == nil {
-				if w, err := fmt.Sscanf(parts[2], "%dt", &width); w == 1 && err == nil {
-					return width, height
-				}
-			}
-		}
-	}
-	return 0, 0
-}
+/* HELPER FUNCTIONS */
 
-// detectOuterTerminalFeatures detects outer terminal capabilities when in tmux/screen
-func detectOuterTerminalFeatures(features *TerminalFeatures) {
-	// In tmux, use the dedicated detection functions which handle tmux logic internally
-	// Each protocol file now contains the logic for detecting through tmux
-	features.KittyGraphics = DetectKittyFromEnvironment()
-	features.SixelGraphics = DetectSixelFromEnvironment()
-	features.ITerm2Graphics = DetectITerm2FromEnvironment()
+// isInteractiveTerminal checks if stdin is connected to a terminal
+func isInteractiveTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }

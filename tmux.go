@@ -93,3 +93,8 @@ func getTmuxEscapeSequences() (start, escape, end string) {
 	}
 	return "", "\x1b", ""
 }
+
+// inScreen checks if running inside GNU Screen
+func inScreen() bool {
+	return strings.HasPrefix(os.Getenv("TERM"), "screen")
+}
