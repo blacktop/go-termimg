@@ -71,13 +71,19 @@ func (r *SixelRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	// Set dimensions if specified in render options
 	if opts.Width > 0 {
-		// Convert character cells to approximate pixels for encoder
-		fontW, _ := getTerminalFontSize()
+		// Convert character cells to approximate pixels for encoder using cached font size
+		fontW := opts.features.FontWidth
+		if fontW <= 0 {
+			fontW = 8 // Fallback value
+		}
 		enc.Width = opts.Width * fontW
 	}
 	if opts.Height > 0 {
-		// Convert character cells to approximate pixels for encoder
-		_, fontH := getTerminalFontSize()
+		// Convert character cells to approximate pixels for encoder using cached font size
+		fontH := opts.features.FontHeight
+		if fontH <= 0 {
+			fontH = 16 // Fallback value
+		}
 		enc.Height = opts.Height * fontH
 	}
 
@@ -207,8 +213,6 @@ func DetectSixelFromEnvironment() bool {
 
 	// Check TERM_PROGRAM for Sixel support
 	switch termProgram {
-	case "iTerm.app":
-		return true
 	case "mintty":
 		return true
 	case "WezTerm":
@@ -219,22 +223,20 @@ func DetectSixelFromEnvironment() bool {
 
 	// When in tmux, check for outer terminal hints
 	if inTmux() {
-		// Check for iTerm2 indicators (iTerm2 supports Sixel)
-		if os.Getenv("ITERM_SESSION_ID") != "" {
-			return true
-		}
-		if strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm") {
-			return true
-		}
-
 		// Check for WezTerm (supports Sixel)
 		if os.Getenv("WEZTERM_EXECUTABLE") != "" {
 			return true
 		}
 
-		// Check TERM_SESSION_ID for iTerm2 format
+		// Do NOT detect Sixel for iTerm2 (it doesn't support Sixel)
+		if os.Getenv("ITERM_SESSION_ID") != "" {
+			return false
+		}
+		if strings.Contains(strings.ToLower(os.Getenv("LC_TERMINAL")), "iterm") {
+			return false
+		}
 		if os.Getenv("TERM_SESSION_ID") != "" && strings.Contains(os.Getenv("TERM_SESSION_ID"), ":") {
-			return true
+			return false
 		}
 
 		// Do NOT detect Sixel for Ghostty (it doesn't support Sixel)
