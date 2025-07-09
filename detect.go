@@ -124,7 +124,7 @@ func detectFeaturesFromQueries(features *TerminalFeatures) {
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	// Try font size query first (most reliable)
-	if width, height, err := queryFontSize(); err == nil && width > 0 && height > 0 {
+	if width, height, err := GetTerminalFontSize(); err == nil && width > 0 && height > 0 {
 		features.FontWidth = width
 		features.FontHeight = height
 	}
@@ -149,8 +149,8 @@ func detectFeaturesFromQueries(features *TerminalFeatures) {
 	}
 }
 
-// queryFontSize query functions with short timeouts
-func queryFontSize() (width, height int, err error) {
+// GetTerminalFontSize query functions with short timeouts
+func GetTerminalFontSize() (width, height int, err error) {
 	query := "\x1b[16t"
 	if inTmux() {
 		query = "\x1bPtmux;\x1b\x1b[16t\x1b\\"

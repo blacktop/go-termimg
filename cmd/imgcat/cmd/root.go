@@ -381,7 +381,10 @@ func placeImageAtPosition(img *termimg.Image) error {
 	pixelHeight := imgSource.Bounds().Dy()
 
 	// Get terminal font size
-	fontW, fontH := termimg.GetTerminalFontSize()
+	fontW, fontH, err := termimg.GetTerminalFontSize()
+	if err != nil {
+		return fmt.Errorf("failed to get terminal font size: %w", err)
+	}
 
 	// Calculate character cell dimensions based on image pixels and font size
 	calculatedWidthCells := pixelWidth / fontW
