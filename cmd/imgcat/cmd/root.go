@@ -45,6 +45,14 @@ var (
 	tmuxMode    bool
 	zIndex      int
 	virtual     bool
+
+	// Enhanced positioning options
+	showUnicode bool
+	xPosition   int
+	yPosition   int
+	placeImage  bool
+	imageID     string
+	testGrid    bool
 )
 
 func init() {
@@ -62,6 +70,18 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&tmuxMode, "tmux", false, "Force tmux mode")
 	rootCmd.PersistentFlags().IntVarP(&zIndex, "z-index", "z", 0, "Z-index for layering (Kitty only)")
 	rootCmd.PersistentFlags().BoolVar(&virtual, "virtual", false, "Use virtual mode (Kitty only)")
+	rootCmd.PersistentFlags().Bool("compression", false, "Enable zlib compression (Kitty only)")
+	rootCmd.PersistentFlags().Bool("png", false, "Enable PNG data transfer (Kitty only)")
+	rootCmd.PersistentFlags().Bool("temp", false, "Enable temporary file transfer (Kitty only)")
+	rootCmd.PersistentFlags().Int("image-num", 0, "Set image number (Kitty only)")
+
+	// Enhanced positioning flags
+	rootCmd.PersistentFlags().BoolVar(&showUnicode, "unicode", false, "Show Unicode placeholders instead of transmitting image (Kitty only)")
+	rootCmd.PersistentFlags().IntVarP(&xPosition, "x", "x", 0, "X position in character cells (for placement mode)")
+	rootCmd.PersistentFlags().IntVarP(&yPosition, "y", "y", 0, "Y position in character cells (for placement mode)")
+	rootCmd.PersistentFlags().BoolVar(&placeImage, "place", false, "Use placement mode (transmit first, then place)")
+	rootCmd.PersistentFlags().StringVar(&imageID, "id", "", "Image ID for placement mode")
+	rootCmd.PersistentFlags().BoolVar(&testGrid, "test-grid", false, "Display a test grid showing Unicode positioning")
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -76,6 +96,11 @@ var rootCmd = &cobra.Command{
 
 		if detectOnly {
 			showDetectionInfo()
+			return nil
+		}
+
+		if testGrid {
+			showTestGrid()
 			return nil
 		}
 
@@ -137,6 +162,22 @@ var rootCmd = &cobra.Command{
 			img = img.Virtual(true)
 		}
 
+		if compression, _ := cmd.Flags().GetBool("compression"); compression {
+			img = img.Compression(true)
+		}
+
+		if png, _ := cmd.Flags().GetBool("png"); png {
+			img = img.PNG(true)
+		}
+
+		if temp, _ := cmd.Flags().GetBool("temp"); temp {
+			img = img.TempFile(true)
+		}
+
+		if imageNum, _ := cmd.Flags().GetInt("image-num"); imageNum > 0 {
+			img = img.ImageNum(imageNum)
+		}
+
 		if tmuxMode {
 			termimg.ForceTmux(true)
 		}
@@ -149,6 +190,15 @@ var rootCmd = &cobra.Command{
 					log.Errorf("error clearing image: %v", clearErr)
 				}
 			}()
+		}
+
+		// Handle special modes
+		if showUnicode {
+			return showUnicodePlaceholders(img)
+		}
+
+		if placeImage {
+			return placeImageAtPosition(img)
 		}
 
 		return img.Print()
@@ -214,6 +264,162 @@ func showDetectionInfo() {
 			fmt.Printf("  %s: %s\n", env, val)
 		}
 	}
+}
+
+// showTestGrid displays a test grid showing Unicode positioning
+func showTestGrid() {
+	fmt.Println("🧪 Unicode Positioning Test Grid")
+	fmt.Println("===============================")
+	fmt.Println()
+
+	// Create a sample test grid
+	imageID := uint32(42)
+
+	// Show a 4x4 grid of Unicode placeholders
+	fmt.Println("4x4 Unicode Placeholder Grid:")
+	area := termimg.CreatePlaceholderArea(imageID, 4, 4)
+	rendered := termimg.RenderPlaceholderAreaWithImageID(area, imageID)
+	fmt.Print(rendered)
+	fmt.Println()
+
+	// Show individual placeholders with their coordinates
+	fmt.Println("\nIndividual Placeholders:")
+	for row := uint16(0); row < 3; row++ {
+		for col := uint16(0); col < 3; col++ {
+			placeholder := termimg.CreatePlaceholder(row, col, byte(imageID>>24))
+			fmt.Printf("(%d,%d): %s  ", row, col, placeholder)
+		}
+		fmt.Println()
+	}
+}
+
+// showUnicodePlaceholders generates and displays Unicode placeholders for virtual images
+func showUnicodePlaceholders(img *termimg.Image) error {
+	fmt.Println("🔤 Unicode Placeholders Mode")
+	fmt.Println("===========================")
+	fmt.Println()
+
+	// Force virtual mode and Kitty protocol
+	img = img.Virtual(true).Protocol(termimg.Kitty)
+
+	// For demo purposes, let's create a 10x5 placeholder grid
+	imageID := uint32(123)
+	rows := uint16(5)
+	cols := uint16(10)
+
+	fmt.Printf("Generated %dx%d placeholder grid for image ID %d:\n", rows, cols, imageID)
+
+	area := termimg.CreatePlaceholderArea(imageID, rows, cols)
+	rendered := termimg.RenderPlaceholderAreaWithImageID(area, imageID)
+	fmt.Print(rendered)
+	fmt.Println()
+
+	fmt.Println("\nNote: These placeholders would normally be displayed after transmitting")
+	fmt.Println("a virtual image. In a real scenario, you would:")
+	fmt.Println("1. Transmit the image with U=1 (virtual placement)")
+	fmt.Println("2. Display these Unicode placeholders to position the image")
+
+	return nil
+}
+
+// placeImageAtPosition handles placement mode
+func placeImageAtPosition(img *termimg.Image) error {
+	fmt.Println("📍 Image Placement Mode")
+	fmt.Println("=======================")
+	fmt.Println()
+
+	// Force Kitty protocol for placement
+	img = img.Protocol(termimg.Kitty)
+
+	if imageID == "" {
+		// Generate a unique ID if not provided
+		imageID = fmt.Sprintf("imgcat_%d", time.Now().Unix())
+	}
+
+	fmt.Printf("Using image ID: %s\n", imageID)
+	fmt.Printf("Position: (%d, %d)\n", xPosition, yPosition)
+	if zIndex > 0 {
+		fmt.Printf("Z-index: %d\n", zIndex)
+	}
+	fmt.Println()
+
+	// First, transmit the image with virtual placement
+	img = img.Virtual(true).ZIndex(zIndex)
+
+	fmt.Println("Step 1: Transmitting image with virtual placement...")
+	if err := img.Print(); err != nil {
+		return fmt.Errorf("failed to transmit image: %w", err)
+	}
+
+	// Now place the image at the specified position
+	fmt.Println("Step 2: Placing image at specified position...")
+
+	// Get the renderer that was used for this image
+	renderer, err := img.GetRenderer()
+	if err != nil {
+		return fmt.Errorf("failed to get renderer: %w", err)
+	}
+
+	kittyRenderer, ok := renderer.(*termimg.KittyRenderer)
+	if !ok {
+		return fmt.Errorf("expected KittyRenderer, got %T", renderer)
+	}
+
+	// Get the actual numeric image ID that was assigned during rendering
+	actualImageID := kittyRenderer.GetLastImageID()
+	actualImageIDStr := fmt.Sprintf("%d", actualImageID)
+
+	// Calculate dimensions in character cells for placement
+	var widthCells, heightCells int
+
+	// Get the actual image dimensions in pixels
+	imgSource, err := img.GetSource()
+	if err != nil {
+		return fmt.Errorf("failed to get image source: %w", err)
+	}
+	pixelWidth := imgSource.Bounds().Dx()
+	pixelHeight := imgSource.Bounds().Dy()
+
+	// Get terminal font size
+	fontW, fontH := termimg.GetTerminalFontSize()
+
+	// Calculate character cell dimensions based on image pixels and font size
+	calculatedWidthCells := pixelWidth / fontW
+	calculatedHeightCells := pixelHeight / fontH
+
+	// If explicit dimensions were provided, use those as character cell dimensions
+	if width > 0 && height > 0 {
+		widthCells = width
+		heightCells = height
+	} else if width > 0 {
+		widthCells = width
+		heightCells = calculatedHeightCells // Use calculated height if only width is provided
+	} else if height > 0 {
+		heightCells = height
+		widthCells = calculatedWidthCells // Use calculated width if only height is provided
+	} else {
+		// No dimensions specified - use calculated dimensions
+		widthCells = calculatedWidthCells
+		heightCells = calculatedHeightCells
+	}
+
+	// Ensure minimum size
+	if widthCells < 1 {
+		widthCells = 1
+	}
+	if heightCells < 1 {
+		heightCells = 1
+	}
+
+	fmt.Printf("Image will be placed at position (%d, %d) with size %dx%d cells\n",
+		xPosition, yPosition, widthCells, heightCells)
+
+	if err := kittyRenderer.PlaceImageWithSize(actualImageIDStr, xPosition, yPosition, zIndex, widthCells, heightCells); err != nil {
+		return fmt.Errorf("failed to place image: %w", err)
+	}
+
+	fmt.Println("✅ Image transmitted and placed successfully!")
+	return nil
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

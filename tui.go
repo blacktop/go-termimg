@@ -15,6 +15,12 @@ type ImageWidget struct {
 	protocol    Protocol
 	rendered    string
 	needsUpdate bool
+
+	// Virtual placement support
+	virtual bool
+	zIndex  int
+	imageID uint32
+	placed  bool
 }
 
 // NewImageWidget creates a new image widget from an Image
@@ -58,10 +64,58 @@ func (w *ImageWidget) SetPosition(x, y int) *ImageWidget {
 	return w
 }
 
+// SetSizeWithCorrection sets the widget dimensions and corrects for aspect ratio
+func (w *ImageWidget) SetSizeWithCorrection(width, height int) *ImageWidget {
+
+	cellWidth, cellHeight := 1, 2 // fallback to common ratio
+
+	// Calculate aspect ratios
+	imageAspectRatio := float64(w.image.Bounds.Dx()) / float64(w.image.Bounds.Dy())
+	widgetAspectRatio := (float64(width) * float64(cellWidth)) / (float64(height) * float64(cellHeight))
+
+	newWidth := width
+	newHeight := height
+
+	// Adjust size to fit and preserve aspect ratio
+	if imageAspectRatio > widgetAspectRatio {
+		// Image is wider than the widget area
+		newHeight = int((float64(width) * float64(cellWidth)) / imageAspectRatio / float64(cellHeight))
+	} else {
+		// Image is taller than or equal to the widget area
+		newWidth = int((float64(height) * float64(cellHeight)) * imageAspectRatio / float64(cellWidth))
+	}
+
+	if w.width != newWidth || w.height != newHeight {
+		w.width = newWidth
+		w.height = newHeight
+		w.needsUpdate = true
+	}
+
+	return w
+}
+
 // SetProtocol sets the rendering protocol to use
 func (w *ImageWidget) SetProtocol(protocol Protocol) *ImageWidget {
 	if w.protocol != protocol {
 		w.protocol = protocol
+		w.needsUpdate = true
+	}
+	return w
+}
+
+// SetVirtual enables virtual placement mode (Kitty only)
+func (w *ImageWidget) SetVirtual(virtual bool) *ImageWidget {
+	if w.virtual != virtual {
+		w.virtual = virtual
+		w.needsUpdate = true
+	}
+	return w
+}
+
+// SetZIndex sets the z-index for layering (Kitty only)
+func (w *ImageWidget) SetZIndex(zIndex int) *ImageWidget {
+	if w.zIndex != zIndex {
+		w.zIndex = zIndex
 		w.needsUpdate = true
 	}
 	return w
@@ -93,6 +147,11 @@ func (w *ImageWidget) Render() (string, error) {
 		img = img.Height(w.height)
 	}
 
+	// Apply virtual placement and z-index if using Kitty
+	if w.protocol == Kitty {
+		img = img.Virtual(w.virtual).ZIndex(w.zIndex)
+	}
+
 	// Render the image
 	output, err := img.Render()
 	if err != nil {
@@ -102,12 +161,95 @@ func (w *ImageWidget) Render() (string, error) {
 	w.rendered = output
 	w.needsUpdate = false
 
+	// Store the image ID if this is a Kitty renderer
+	if w.protocol == Kitty && w.virtual {
+		renderer, err := img.GetRenderer()
+		if err == nil {
+			if kittyRenderer, ok := renderer.(*KittyRenderer); ok {
+				w.imageID = kittyRenderer.GetLastImageID()
+			}
+		}
+	}
+
 	return output, nil
 }
 
 // Update forces the widget to re-render on next Render() call
 func (w *ImageWidget) Update() {
 	w.needsUpdate = true
+}
+
+// Clear clears the image from the terminal
+func (w *ImageWidget) Clear() error {
+	return w.image.ClearAll()
+}
+
+// RenderVirtual renders the image with virtual placement and returns the placement string
+func (w *ImageWidget) RenderVirtual() (string, error) {
+	if w.protocol != Kitty {
+		return "", fmt.Errorf("virtual placement is only supported with Kitty protocol")
+	}
+
+	// First render the image with virtual placement
+	w.SetVirtual(true)
+	_, err := w.Render()
+	if err != nil {
+		return "", err
+	}
+
+	// Now generate the placement string
+	if w.imageID == 0 {
+		return "", fmt.Errorf("no image ID available")
+	}
+
+	// Generate the Unicode placeholder placement directly
+	var output strings.Builder
+
+	// Build color encoding for the image ID
+	colorCode := w.imageID & 0xFFFFFF
+	red := (colorCode >> 16) & 0xFF
+	green := (colorCode >> 8) & 0xFF
+	blue := colorCode & 0xFF
+	idExtra := byte(w.imageID >> 24)
+
+	// Save cursor position
+	output.WriteString("\x1b[s")
+
+	// Move to the target position
+	if w.x > 0 || w.y > 0 {
+		output.WriteString(fmt.Sprintf("\x1b[%d;%dH", w.y+1, w.x+1))
+	}
+
+	// Set foreground color to encode image ID
+	output.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue))
+
+	// Create the Unicode placeholders
+	for row := 0; row < w.height; row++ {
+		if row > 0 {
+			// Move to start of next row
+			output.WriteString(fmt.Sprintf("\x1b[%d;%dH", w.y+1+row, w.x+1))
+		}
+
+		// First placeholder in row has full encoding
+		placeholder := CreatePlaceholder(uint16(row), 0, idExtra)
+		output.WriteString(placeholder)
+
+		// Rest of the row uses just the base character
+		for col := 1; col < w.width; col++ {
+			output.WriteString(PLACEHOLDER_CHAR)
+		}
+	}
+
+	// Reset color and restore cursor
+	output.WriteString("\x1b[39m\x1b[u")
+
+	return output.String(), nil
+}
+
+// PlaceAt places a virtual image at the specified position
+func (w *ImageWidget) PlaceAt(x, y int) (string, error) {
+	w.SetPosition(x, y)
+	return w.RenderVirtual()
 }
 
 // ImageGallery represents a collection of images for gallery display
@@ -332,4 +474,9 @@ func (g *ImageGallery) UpdateAllImages() {
 	for _, widget := range g.images {
 		widget.Update()
 	}
+}
+
+// MoveCursorUpAndToBeginning moves the cursor up n lines and to the beginning of the line.
+func MoveCursorUpAndToBeginning(n int) string {
+	return fmt.Sprintf("\033[%dF", n)
 }

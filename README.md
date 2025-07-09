@@ -19,16 +19,25 @@
 ## Features
 
 **Universal Protocol Support**
-- 🐱 **Kitty** - Fast graphics with virtual images, z-index, Unicode placeholders
+- 🐱 **Kitty** - Fast graphics with virtual images, z-index, compression
 - 🎨 **Sixel** - High-quality with palette optimization and dithering
-- 🍎 **iTerm2** - Native inline images
+- 🍎 **iTerm2** - Native inline images with ECH clearing
 - 🧱 **Halfblocks** - Unicode fallback (works everywhere)
 
 **Rich Image Processing**
 - Smart scaling (fit, fill, stretch, none)
 - Advanced dithering (Stucki, Floyd-Steinberg)
 - Quality vs speed control
-- TUI framework integration
+- TUI framework integration (Bubbletea)
+
+**Advanced Features**
+- Automatic protocol detection with fallbacks
+- Terminal font size detection via CSI queries
+- Tmux passthrough support
+- Optimized font size caching
+
+> [!WARNING] 
+> Kitty Unicode placeholder/relative placement features are currently under construction and not recommended for production use.
 
 ## Installation
 
@@ -69,17 +78,17 @@ rendered, err := termimg.Open("image.png").
 ### Protocol-Specific Features
 
 ```go
-// Kitty with virtual images and z-index
+// Kitty with virtual images and z-index (experimental)
 termimg.Open("overlay.png").
     Protocol(termimg.Kitty).
     Virtual(true).
     ZIndex(5).
     Print()
 
-// Sixel with quality optimization
+// Sixel with dithering
 termimg.Open("photo.jpg").
     Protocol(termimg.Sixel).
-    OptimizePalette(true).
+    Dither(true).
     DitherMode(termimg.DitherStucki).
     Print()
 ```
@@ -109,40 +118,54 @@ func main() {
 
 ## 🛠️ Command Line Tools
 
-Install `imgcat` demo tool
+### imgcat - Terminal Image Viewer
 
+Install:
 ```bash
 go install github.com/blacktop/go-termimg/cmd/imgcat@latest
 ```
 
-### imgcat - Terminal Image Viewer
-
+Basic usage:
 ```bash
-# Basic usage
+# Display an image
 imgcat image.png
 
 # With specific protocol and size
-imgcat -w 100 -H 50 --protocol kitty image.png
+imgcat -W 100 -H 50 --protocol kitty image.png
 
-# Try different demos
-imgcat --demo showcase  # Comprehensive feature demo
-imgcat --demo animation # Animation cycling
-imgcat --demo placement # Virtual image placement
+# Virtual placement with positioning (Kitty only)
+imgcat --virtual --x 10 --y 5 --z-index 3 image.png
+
+# Test terminal capabilities
+imgcat --detect
+
+# Show Unicode test grid
+imgcat --test-grid
 ```
 
-Install `imgcat` demo tool
-
+Advanced options:
 ```bash
-go install github.com/blacktop/go-termimg/cmd/imgcat@latest
+# Compression and PNG mode (Kitty)
+imgcat --compression --png image.png
+
+# Dithering
+imgcat --dither photo.jpg
+
+# Scale modes
+imgcat --scale fit image.png    # Fit within terminal
+imgcat --scale fill image.png   # Fill terminal, crop if needed
+imgcat --scale none image.png   # No scaling
 ```
 
-### tui-gallery - Interactive TUI Demo
+### gallery - Interactive TUI Demo
 
+Install and run:
 ```bash
-tui-gallery
+go install github.com/blacktop/go-termimg/cmd/gallery@latest
+gallery
 ```
 
-Interactive gallery with:
+Interactive features:
 - Protocol switching (1-5 keys)
 - Feature controls (v, z, d, s keys)
 - Real-time settings display (f key)
@@ -165,16 +188,41 @@ if termimg.KittySupported() {
     // Use Kitty features
 }
 
-// List all available protocols
-protocols := termimg.DetermineProtocols()
+// Get detailed terminal features
+features := termimg.QueryTerminalFeatures()
+fmt.Printf("Font size: %dx%d\n", features.FontWidth, features.FontHeight)
 ```
 
 ## ⚡ Performance
 
-- **Halfblocks**: 792µs (fastest)
-- **Kitty**: 2.57ms (efficient) 
-- **iTerm2**: 2.53ms (fast)
-- **Sixel**: 92ms (high quality)
+Performance benchmarks for different protocols:
+
+- **Halfblocks**: ~800µs (fastest, works everywhere)
+- **Kitty**: ~2.5ms (efficient, modern terminals) 
+- **iTerm2**: ~2.5ms (fast, macOS)
+- **Sixel**: ~90ms (high quality, slower)
+
+Font size detection is cached to avoid repeated terminal queries.
+
+## 🧪 Development
+
+### Running Examples
+
+The `cmd/` directory contains several example programs:
+
+```bash
+# Image viewer
+cd cmd/imgcat/
+go run main.go ../../test/image.png --id 123 --place --x 5 --y 10
+
+# Interactive gallery
+cd cmd/gallery/
+go run main.go
+
+# Terminal info
+cd cmd/terminfo/
+go run main.go
+```
 
 ## License
 
