@@ -237,7 +237,10 @@ func DetectITerm2FromEnvironment() bool {
 }
 
 func DetectITerm2FromQuery() bool {
-	return queryITerm2ReportCellSize() || queryITerm2ReportVariable()
+	if _, _, _, ok := GetITerm2CellSize(); ok {
+		return true
+	}
+	return false
 }
 
 // GetITerm2CellSize uses OSC 1337 ReportCellSize to get font dimensions
@@ -245,8 +248,9 @@ func DetectITerm2FromQuery() bool {
 func GetITerm2CellSize() (float64, float64, float64, bool) {
 	// Use the generic query with a custom parser
 	var width, height, scale float64
-
+	// Send ReportCellSize query: ESC ] 1337 ; ReportCellSize BEL
 	query := "\x1b]1337;ReportCellSize\x07"
+
 	validator := func(response string) bool {
 		// iTerm2 responds with OSC 1337;ReportCellSize=width;height;scale
 		if strings.Contains(response, "1337") && strings.Contains(response, "ReportCellSize=") {
@@ -277,33 +281,39 @@ func GetITerm2CellSize() (float64, float64, float64, bool) {
 	return width, height, scale, success
 }
 
-// queryITerm2ReportCellSize sends OSC 1337 ReportCellSize query and parses response
-func queryITerm2ReportCellSize() bool {
-	// Send ReportCellSize query: ESC ] 1337 ; ReportCellSize BEL
-	query := "\x1b]1337;ReportCellSize\x07"
+func GetITerm2Variable(variable string) (string, bool) {
+	// Use the generic query with a custom parser
+	var value string
+	// Send ReportVariable query: ESC ] 1337 ; ReportVariable=variable BEL
+	query := fmt.Sprintf("\x1b]1337;ReportVariable=%s\x07", variable)
 
-	// Response validator for ReportCellSize
 	validator := func(response string) bool {
-		// iTerm2 responds with OSC 1337;ReportCellSize=width;height;scale
-		return strings.Contains(response, "1337") && strings.Contains(response, "ReportCellSize=")
+		// iTerm2 responds with OSC 1337;ReportVariable=variable:value
+		if strings.Contains(response, "1337") && strings.Contains(response, "ReportVariable=") {
+			// Parse the response
+			parts := strings.Split(response, "ReportVariable=")
+			if len(parts) >= 2 {
+				valuePart := parts[1]
+				// Find the end of the value (before any escape sequence)
+				if idx := strings.IndexAny(valuePart, "\x1b\x07"); idx > 0 {
+					valuePart = valuePart[:idx]
+				}
+				bdata, err := base64.StdEncoding.DecodeString(valuePart)
+				if err != nil {
+					bdata, err = base64.StdEncoding.WithPadding(base64.StdPadding).DecodeString(valuePart)
+					if err != nil {
+						value = valuePart // Fallback to raw value if decoding fails
+						return false      // Failed to decode base64
+					}
+				}
+				value = string(bdata)
+				return true
+			}
+		}
+		return false
 	}
 
-	return queryITerm2(query, validator)
-}
-
-// queryITerm2ReportVariable sends OSC 1337 ReportVariable query and parses response
-func queryITerm2ReportVariable() bool {
-	// Send ReportVariable query for session.name
-	// Variable name "session.name" encoded in base64: c2Vzc2lvbi5uYW1l
-	query := "\x1b]1337;ReportVariable=c2Vzc2lvbi5uYW1l\x07"
-
-	// Response validator for ReportVariable
-	validator := func(response string) bool {
-		// iTerm2 responds with OSC 1337;ReportVariable=base64_name=base64_value
-		return strings.Contains(response, "1337") && strings.Contains(response, "ReportVariable")
-	}
-
-	return queryITerm2(query, validator)
+	return value, queryITerm2(query, validator)
 }
 
 // queryITerm2 is a helper function that sends an iTerm2 query and checks for a response
@@ -335,7 +345,6 @@ func queryITerm2(query string, responseValidator func(string) bool) bool {
 
 	// Wrap for tmux passthrough if needed
 	if inTmux() {
-		// enableTmuxPassthrough()
 		query = wrapTmuxPassthrough(query)
 	}
 
@@ -343,11 +352,6 @@ func queryITerm2(query string, responseValidator func(string) bool) bool {
 	if _, err := tty.WriteString(query); err != nil {
 		return false // Fail silently to avoid polluting output
 	}
-	// TODO: DUMB HACK - sending twice somehow primes the pump
-	if _, err := tty.WriteString(query); err != nil {
-		return false // Fail silently to avoid polluting output
-	}
-	// time.Sleep(200 * time.Millisecond) // Give terminal time to process
 
 	// Read response with timeout
 	responseChan := make(chan bool, 1)
@@ -366,6 +370,12 @@ func queryITerm2(query string, responseValidator func(string) bool) bool {
 	case result := <-responseChan:
 		return result
 	case <-time.After(200 * time.Millisecond):
+		// Longer timeout to ensure we consume any delayed response
+		// Try to read any remaining data to prevent it from appearing on stdout
+		go func() {
+			buf := make([]byte, 512)
+			tty.Read(buf) // Consume any delayed response
+		}()
 		return false
 	}
 }

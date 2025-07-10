@@ -75,15 +75,9 @@ func IsTmuxPassthroughEnabled() bool {
 // wrapTmuxPassthrough wraps an escape sequence for tmux passthrough if needed
 // This ensures graphics protocols can pass through tmux to the outer terminal
 func wrapTmuxPassthrough(output string) string {
-	if inTmux() {
-		if !strings.HasPrefix(output, "\x1b") {
-			return output
-		}
-		// tmux passthrough format: \ePtmux;\e{escaped_sequence}\e\\
-		// All \e (ESC) characters in the sequence must be doubled
-		return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
-	return output
+	// tmux passthrough format: \ePtmux;\e{escaped_sequence}\e\\
+	// All \e (ESC) characters in the sequence must be doubled
+	return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
 }
 
 // getTmuxEscapeSequences returns the appropriate escape sequences for tmux mode

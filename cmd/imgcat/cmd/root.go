@@ -64,7 +64,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVarP(&width, "width", "W", 0, "Resize image to width")
 	rootCmd.PersistentFlags().IntVarP(&height, "height", "H", 0, "Resize image to height")
 	rootCmd.PersistentFlags().StringVarP(&protocolStr, "protocol", "P", "auto", "Protocol to use (auto, kitty, sixel, iterm2, halfblocks)")
-	rootCmd.PersistentFlags().StringVarP(&scaleStr, "scale", "s", "fit", "Scale mode (none, fit, fill, stretch)")
+	rootCmd.PersistentFlags().StringVarP(&scaleStr, "scale", "s", "none", "Scale mode (none, fit, fill, stretch)")
 	rootCmd.PersistentFlags().BoolVarP(&detectOnly, "detect", "d", false, "Only detect and display terminal protocols")
 	rootCmd.PersistentFlags().BoolVarP(&dither, "dither", "D", false, "Enable dithering")
 	rootCmd.PersistentFlags().BoolVar(&tmuxMode, "tmux", false, "Force tmux mode")

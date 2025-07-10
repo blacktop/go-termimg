@@ -111,8 +111,9 @@ func (r *SixelRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		if !strings.HasPrefix(fullSixelSequence, "\x1b") {
 			return "", fmt.Errorf("sixel sequence does not start with escape")
 		}
-		// Apply tmux passthrough to the complete sixel sequence
-		output = wrapTmuxPassthrough(fullSixelSequence)
+		if inTmux() {
+			output = wrapTmuxPassthrough(fullSixelSequence)
+		}
 	} else {
 		output = fullSixelSequence
 	}
@@ -157,8 +158,10 @@ func (r *SixelRenderer) Clear(opts ClearOptions) error {
 		// Fallback to screen clear if no dimensions available
 		clearSequence = "\x1b[H\x1b[2J"
 	}
-
-	if _, err := io.WriteString(os.Stdout, wrapTmuxPassthrough(clearSequence)); err != nil {
+	if inTmux() {
+		clearSequence = wrapTmuxPassthrough(clearSequence)
+	}
+	if _, err := io.WriteString(os.Stdout, clearSequence); err != nil {
 		return fmt.Errorf("failed to clear sixel image: %w", err)
 	}
 

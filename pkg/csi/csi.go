@@ -18,7 +18,10 @@ const QueryTimeout = 100 * time.Millisecond
 // QueryTextAreaSizeInPixels queries text area size in pixels using CSI 14t
 // returns: width and height in pixels, or 0,0 if query fails
 func QueryTextAreaSizeInPixels() (width, height int, ok bool) {
-	query := wrapTmuxPassthrough("\x1b[14t")
+	query := "\x1b[14t"
+	if inTmux() {
+		query = wrapTmuxPassthrough(query)
+	}
 
 	// Open controlling terminal
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -126,7 +129,10 @@ func QueryCharacterCellSizeInPixels() (width, height int, ok bool) {
 // returns: width and height in pixels, and success status
 func QueryXTSMGRAPHICS() (width, height int, ok bool) {
 	// Pi=2 (Sixel), Pa=1 (read), Pv=0
-	query := wrapTmuxPassthrough("\x1b[?2;1;0S")
+	query := "\x1b[?2;1;0S"
+	if inTmux() {
+		query = wrapTmuxPassthrough(query)
+	}
 
 	// Open controlling terminal
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -242,13 +248,7 @@ func inTmux() bool {
 
 // wrapTmuxPassthrough wraps an escape sequence for tmux passthrough if needed
 func wrapTmuxPassthrough(output string) string {
-	if inTmux() {
-		if !strings.HasPrefix(output, "\x1b") {
-			return output
-		}
-		// tmux passthrough format: \ePtmux;\e{escaped_sequence}\e\\
-		// All \e (ESC) characters in the sequence must be doubled
-		return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
-	}
-	return output
+	// tmux passthrough format: \ePtmux;\e{escaped_sequence}\e\\
+	// All \e (ESC) characters in the sequence must be doubled
+	return "\x1bPtmux;\x1b" + strings.ReplaceAll(output, "\x1b", "\x1b\x1b") + "\x1b\\"
 }
