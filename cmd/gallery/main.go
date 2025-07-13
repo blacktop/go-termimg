@@ -9,14 +9,32 @@ import (
 	"strings"
 
 	"github.com/blacktop/go-termimg"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// fileItem represents a file in the list
+type fileItem struct {
+	name string
+	info fs.DirEntry
+}
+
+func (f fileItem) FilterValue() string { return f.name }
+func (f fileItem) Title() string       { return f.name }
+func (f fileItem) Description() string { 
+	if f.info.IsDir() {
+		return "Directory"
+	}
+	if isImage(f.name) {
+		return "Image file"
+	}
+	return "File"
+}
+
 type model struct {
-	files        []fs.DirEntry
-	current      int
+	list         list.Model
 	imageWidget  *termimg.ImageWidget
 	widgetCache  map[string]*termimg.ImageWidget
 	viewport     viewport.Model
@@ -95,19 +113,38 @@ func initialModel() model {
 		log.Fatal(err)
 	}
 
-	// Filter out directories and .DS_Store files
-	var fileEntries []fs.DirEntry
+	// Filter out directories and .DS_Store files and create list items
+	var items []list.Item
 	for _, file := range files {
 		if file.Name() == ".DS_Store" {
 			continue
 		}
 		if !file.IsDir() {
-			fileEntries = append(fileEntries, file)
+			items = append(items, fileItem{
+				name: file.Name(),
+				info: file,
+			})
 		}
 	}
 
+	// Create list with custom styling
+	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l.Title = ""
+	l.SetShowStatusBar(false)
+	l.SetShowPagination(false)
+	l.SetShowHelp(false)
+	l.SetFilteringEnabled(false)
+	
+	// Customize the list delegate for our styling
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = selectedItemStyle
+	delegate.Styles.SelectedDesc = selectedItemStyle.Copy().Foreground(mutedColor)
+	delegate.Styles.NormalTitle = itemStyle
+	delegate.Styles.NormalDesc = itemStyle.Copy().Foreground(mutedColor)
+	l.SetDelegate(delegate)
+
 	return model{
-		files:       fileEntries,
+		list:        l,
 		widgetCache: make(map[string]*termimg.ImageWidget),
 		viewport:    viewport.New(0, 0),
 	}
@@ -131,20 +168,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Quit
-		case "up", "k":
-			if m.current > 0 {
-				m.current--
-			}
-		case "down", "j":
-			if m.current < len(m.files)-1 {
-				m.current++
-			}
-		case "home":
-			m.current = 0
-		case "end", "G":
-			if len(m.files) > 0 {
-				m.current = len(m.files) - 1
-			}
 		case "v":
 			// Toggle virtual mode (Kitty only)
 			if termimg.KittySupported() {
@@ -164,6 +187,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					widget.Clear()
 				}
 			}
+		default:
+			// Let the list handle all other key events (navigation, etc.)
+			m.list, cmd = m.list.Update(msg)
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -172,33 +198,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		availableHeight := msg.Height - 6
 		m.viewport.Width = (msg.Width / 2) - 4
 		m.viewport.Height = availableHeight
+		
+		// Update list size for the left panel
+		leftPanelWidth := (msg.Width / 2) - 4
+		m.list.SetWidth(leftPanelWidth)
+		m.list.SetHeight(availableHeight - 2) // Account for borders
 	}
 
 	// If the selection changed, update the image widget
-	if len(m.files) > 0 {
-		selectedFile := m.files[m.current].Name()
-		if m.lastImageID != selectedFile {
-			m.lastImageID = selectedFile
-			m.imageError = nil
+	if len(m.list.Items()) > 0 {
+		if item, ok := m.list.SelectedItem().(fileItem); ok {
+			selectedFile := item.name
+			if m.lastImageID != selectedFile {
+				m.lastImageID = selectedFile
+				m.imageError = nil
 
-			if isImage(selectedFile) {
-				if widget, found := m.widgetCache[selectedFile]; found {
-					m.imageWidget = widget
-				} else {
-					widget, err := termimg.NewImageWidgetFromFile(selectedFile)
-					if err == nil {
-						if m.virtualMode && termimg.KittySupported() {
-							widget.SetProtocol(termimg.Kitty).SetVirtual(true)
-						}
+				if isImage(selectedFile) {
+					if widget, found := m.widgetCache[selectedFile]; found {
 						m.imageWidget = widget
-						m.widgetCache[selectedFile] = widget
 					} else {
-						m.imageWidget = nil
-						m.imageError = err
+						widget, err := termimg.NewImageWidgetFromFile(selectedFile)
+						if err == nil {
+							if m.virtualMode && termimg.KittySupported() {
+								widget.SetProtocol(termimg.Kitty).SetVirtual(true)
+							}
+							m.imageWidget = widget
+							m.widgetCache[selectedFile] = widget
+						} else {
+							m.imageWidget = nil
+							m.imageError = err
+						}
 					}
+				} else {
+					m.imageWidget = nil // It's not an image file
 				}
-			} else {
-				m.imageWidget = nil // It's not an image file
 			}
 		}
 	}
@@ -209,12 +242,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't set viewport content when displaying an image
 	} else if m.imageError != nil {
 		m.viewport.SetContent(errorStyle.Render("Error: " + m.imageError.Error()))
-	} else if len(m.files) > 0 {
+	} else if len(m.list.Items()) > 0 {
 		// Handle non-image file display
-		selectedFile := m.files[m.current].Name()
-		ext := filepath.Ext(selectedFile)
-		info := fmt.Sprintf("File: %s\nType: %s\n\nNot an image.", selectedFile, ext)
-		m.viewport.SetContent(infoStyle.Render(info))
+		if item, ok := m.list.SelectedItem().(fileItem); ok {
+			selectedFile := item.name
+			ext := filepath.Ext(selectedFile)
+			info := fmt.Sprintf("File: %s\nType: %s\n\nNot an image.", selectedFile, ext)
+			m.viewport.SetContent(infoStyle.Render(info))
+		}
 	} else {
 		m.viewport.SetContent("No files in this directory.")
 	}
@@ -229,7 +264,7 @@ func (m model) View() string {
 	var b strings.Builder
 
 	// Title bar
-	title := fmt.Sprintf("Gallery - %d files", len(m.files))
+	title := fmt.Sprintf("Gallery - %d files", len(m.list.Items()))
 	if m.virtualMode {
 		title += " [VIRTUAL MODE]"
 	}
@@ -244,31 +279,11 @@ func (m model) View() string {
 	rightPanelWidth := m.width/2 - 2
 	panelHeight := m.height - 6 // Account for title and legend
 
-	// File list panel
-	var fileList strings.Builder
-	for i, file := range m.files {
-		cursor := "  "
-		style := itemStyle
-		if m.current == i {
-			cursor = "▶ "
-			style = selectedItemStyle
-		}
-
-		fileName := file.Name()
-		if len(fileName) > leftPanelWidth-4 {
-			fileName = fileName[:leftPanelWidth-7] + "..."
-		}
-
-		fileList.WriteString(style.Render(fmt.Sprintf("%s%s", cursor, fileName)))
-		if i < len(m.files)-1 {
-			fileList.WriteString("\n")
-		}
-	}
-
+	// File list panel using the list component
 	leftPanel := panelBorderStyle.
 		Width(leftPanelWidth).
 		Height(panelHeight).
-		Render(fileList.String())
+		Render(m.list.View())
 
 	// Image preview panel
 	var rightPanelContent string
@@ -293,12 +308,12 @@ func (m model) View() string {
 	// Append the image rendering commands AFTER the text UI has been built
 	b.WriteString(m.viewImage())
 
-	// Navigation legend
+	// Navigation legend  
 	legend := []string{
 		legendKeyStyle.Render("↑/k") + " up",
 		legendKeyStyle.Render("↓/j") + " down",
-		legendKeyStyle.Render("home") + " top",
-		legendKeyStyle.Render("G") + " bottom",
+		legendKeyStyle.Render("pgup/pgdn") + " page up/down",
+		legendKeyStyle.Render("home/end") + " top/bottom",
 	}
 
 	if termimg.KittySupported() {
