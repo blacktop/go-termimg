@@ -9,6 +9,21 @@ build:
 	@echo "🚀 Building Version $(shell svu current)"
 	go build -o imgcat ./cmd/imgcat/main.go
 
+.PHONY: test
+test:
+	@echo "🧪 Running Tests"
+	go test ./... -v
+
+.PHONY: test-short
+test-short:
+	@echo "🧪 Running Tests (Short Mode)"
+	go test ./... -short
+
+.PHONY: test-race
+test-race:
+	@echo "🧪 Running Tests with Race Detection"
+	go test ./... -race
+
 .PHONY: demo
 demo:
 	@echo "🚀 Running Demo"
