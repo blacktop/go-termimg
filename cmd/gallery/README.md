@@ -39,8 +39,8 @@ An interactive terminal image gallery that showcases the capabilities of go-term
 |-----|--------|
 | ↑/k | Move up |
 | ↓/j | Move down |
-| home | Jump to first |
-| G | Jump to last |
+| pgup/pgdn | Page up/down |
+| home/end | Jump to first/last |
 | v | Toggle virtual mode (Kitty only) |
 | g | Toggle grid view |
 | q/ESC | Quit |

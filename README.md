@@ -36,8 +36,14 @@
 - Tmux passthrough support
 - Optimized font size caching
 
-> [!WARNING] 
+> [!WARNING]
 > Kitty Unicode placeholder/relative placement features are currently under construction and not recommended for production use.
+
+## Supported Formats
+
+- [x] PNG, JPEG, GIF
+- [x] Any format supported by Go's `image` package
+- [ ] WebP support planned
 
 ## Installation
 
@@ -57,7 +63,7 @@ import "github.com/blacktop/go-termimg"
 func main() {
     // Simple one-liner
     termimg.PrintFile("image.png")
-    
+
     // Or with control
     img, _ := termimg.Open("image.png")
     img.Width(50).Height(25).Print()
@@ -110,13 +116,13 @@ func (m model) View() string {
 func main() {
     img := termimg.NewImageWidgetFromFile("image.png")
     img.SetSize(50, 25).SetProtocol(termimg.Auto)
-    
+
     p := tea.NewProgram(model{widget: img})
     p.Run()
 }
 ```
 
-## 🛠️ Command Line Tools
+## Command Line Tools
 
 ### imgcat - Terminal Image Viewer
 
@@ -166,18 +172,12 @@ gallery
 ```
 
 Interactive features:
-- Protocol switching (1-5 keys)
-- Feature controls (v, z, d, s keys)
-- Real-time settings display (f key)
-- Detailed help (? key)
+- File navigation (↑/↓ or k/j keys, page up/down, home/end)
+- Virtual mode toggle (v key - Kitty only)
+- Grid view toggle (g key)
+- Auto-detection of best terminal protocol
 
-## 📋 Supported Formats
-
-- ✅ PNG, JPEG, GIF
-- ✅ Any format supported by Go's `image` package
-- 🔄 WebP support planned
-
-## 🎯 Protocol Detection
+## Protocol Detection
 
 ```go
 // Auto-detect best available protocol
@@ -193,18 +193,16 @@ features := termimg.QueryTerminalFeatures()
 fmt.Printf("Font size: %dx%d\n", features.FontWidth, features.FontHeight)
 ```
 
-## ⚡ Performance
+## Performance
 
 Performance benchmarks for different protocols:
 
 - **Halfblocks**: ~800µs (fastest, works everywhere)
-- **Kitty**: ~2.5ms (efficient, modern terminals) 
+- **Kitty**: ~2.5ms (efficient, modern terminals)
 - **iTerm2**: ~2.5ms (fast, macOS)
 - **Sixel**: ~90ms (high quality, slower)
 
 Font size detection is cached to avoid repeated terminal queries.
-
-## 🧪 Development
 
 ### Running Examples
 
