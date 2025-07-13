@@ -181,7 +181,7 @@ func (w *ImageWidget) Update() {
 
 // Clear clears the image from the terminal
 func (w *ImageWidget) Clear() error {
-	return w.image.ClearAll()
+	return ClearAll()
 }
 
 // RenderVirtual renders the image with virtual placement and returns the placement string

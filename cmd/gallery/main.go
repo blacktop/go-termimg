@@ -8,24 +8,24 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/blacktop/go-termimg"
-	"github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 type model struct {
-	files       []fs.DirEntry
-	current     int
-	imageWidget *termimg.ImageWidget
-	widgetCache map[string]*termimg.ImageWidget
-	viewport    viewport.Model
-	width       int
-	height      int
-	lastImageID string
+	files        []fs.DirEntry
+	current      int
+	imageWidget  *termimg.ImageWidget
+	widgetCache  map[string]*termimg.ImageWidget
+	viewport     viewport.Model
+	width        int
+	height       int
+	lastImageID  string
 	imageContent string
-	imageError  error
-	
+	imageError   error
+
 	// Virtual placement support
 	virtualMode bool
 	gridView    bool
@@ -39,54 +39,54 @@ var (
 	textColor      = lipgloss.Color("#FAFAFA")
 	mutedColor     = lipgloss.Color("#626262")
 	errorColor     = lipgloss.Color("#FF5F87")
-	
+
 	// Title bar style
 	titleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(textColor).
-		Background(primaryColor).
-		PaddingLeft(2).
-		PaddingRight(2).
-		MarginBottom(1)
+			Bold(true).
+			Foreground(textColor).
+			Background(primaryColor).
+			PaddingLeft(2).
+			PaddingRight(2).
+			MarginBottom(1)
 
 	// Panel border styles
 	panelBorderStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1)
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(primaryColor).
+				Padding(1)
 
 	// File list styles
 	itemStyle = lipgloss.NewStyle().
-		PaddingLeft(1).
-		Foreground(textColor)
-	
+			PaddingLeft(1).
+			Foreground(textColor)
+
 	selectedItemStyle = lipgloss.NewStyle().
-		PaddingLeft(1).
-		Foreground(textColor).
-		Background(primaryColor).
-		Bold(true)
+				PaddingLeft(1).
+				Foreground(textColor).
+				Background(primaryColor).
+				Bold(true)
 
 	// Legend styles
 	legendStyle = lipgloss.NewStyle().
-		Foreground(mutedColor).
-		Background(lipgloss.Color("#1A1A1A")).
-		PaddingLeft(1).
-		PaddingRight(1).
-		MarginTop(1)
+			Foreground(mutedColor).
+			Background(lipgloss.Color("#1A1A1A")).
+			PaddingLeft(1).
+			PaddingRight(1).
+			MarginTop(1)
 
 	legendKeyStyle = lipgloss.NewStyle().
-		Foreground(accentColor).
-		Bold(true)
+			Foreground(accentColor).
+			Bold(true)
 
 	// Error style
 	errorStyle = lipgloss.NewStyle().
-		Foreground(errorColor).
-		Bold(true)
+			Foreground(errorColor).
+			Bold(true)
 
 	// Info style for non-image files
 	infoStyle = lipgloss.NewStyle().
-		Foreground(mutedColor).
-		Italic(true)
+			Foreground(mutedColor).
+			Italic(true)
 )
 
 func initialModel() model {
@@ -119,7 +119,6 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	prevCurrent := m.current
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -175,31 +174,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Height = availableHeight
 	}
 
-	// Clear old image if selection changed
-	if m.current != prevCurrent {
-		// Clear the viewport content and reset image state
-		m.imageContent = ""
-		m.imageError = nil
-		m.lastImageID = ""
-		
-		// Force viewport to clear by setting empty content
-		m.viewport.SetContent("")
-	}
-
-	// Update image widget and render content
+	// If the selection changed, update the image widget
 	if len(m.files) > 0 {
 		selectedFile := m.files[m.current].Name()
-		if isImage(selectedFile) {
-			// Only update if file changed
-			if m.lastImageID != selectedFile {
-				m.lastImageID = selectedFile
-				
+		if m.lastImageID != selectedFile {
+			m.lastImageID = selectedFile
+			m.imageError = nil
+
+			if isImage(selectedFile) {
 				if widget, found := m.widgetCache[selectedFile]; found {
 					m.imageWidget = widget
 				} else {
 					widget, err := termimg.NewImageWidgetFromFile(selectedFile)
 					if err == nil {
-						// Configure for virtual mode if enabled
 						if m.virtualMode && termimg.KittySupported() {
 							widget.SetProtocol(termimg.Kitty).SetVirtual(true)
 						}
@@ -210,24 +197,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.imageError = err
 					}
 				}
-				
-				// Render the image content for TUI display
-				if m.imageWidget != nil {
-					m.imageWidget.SetSizeWithCorrection(m.viewport.Width, m.viewport.Height)
-					// Instead of direct rendering, create a text representation
-					m.imageContent = m.renderImageForTUI(selectedFile)
-					m.imageError = nil
-				}
+			} else {
+				m.imageWidget = nil // It's not an image file
 			}
-		} else {
-			m.imageWidget = nil
-			m.lastImageID = selectedFile
-			m.imageContent = ""
-			m.imageError = nil
 		}
 	}
 
-	m.viewport, cmd = m.viewport.Update(msg)
+	// Update the image widget's size and viewport content
+	if m.imageWidget != nil {
+		m.imageWidget.SetSizeWithCorrection(m.viewport.Width, m.viewport.Height)
+		// Don't set viewport content when displaying an image
+	} else if m.imageError != nil {
+		m.viewport.SetContent(errorStyle.Render("Error: " + m.imageError.Error()))
+	} else if len(m.files) > 0 {
+		// Handle non-image file display
+		selectedFile := m.files[m.current].Name()
+		ext := filepath.Ext(selectedFile)
+		info := fmt.Sprintf("File: %s\nType: %s\n\nNot an image.", selectedFile, ext)
+		m.viewport.SetContent(infoStyle.Render(info))
+	} else {
+		m.viewport.SetContent("No files in this directory.")
+	}
 	return m, cmd
 }
 
@@ -263,12 +253,12 @@ func (m model) View() string {
 			cursor = "▶ "
 			style = selectedItemStyle
 		}
-		
+
 		fileName := file.Name()
 		if len(fileName) > leftPanelWidth-4 {
 			fileName = fileName[:leftPanelWidth-7] + "..."
 		}
-		
+
 		fileList.WriteString(style.Render(fmt.Sprintf("%s%s", cursor, fileName)))
 		if i < len(m.files)-1 {
 			fileList.WriteString("\n")
@@ -281,32 +271,27 @@ func (m model) View() string {
 		Render(fileList.String())
 
 	// Image preview panel
-	var imageContent string
-	if len(m.files) > 0 {
-		selectedFile := m.files[m.current].Name()
-		if m.imageError != nil {
-			imageContent = errorStyle.Render("Error loading image: " + m.imageError.Error())
-		} else if m.imageContent != "" {
-			imageContent = m.imageContent
-		} else if isImage(selectedFile) {
-			imageContent = infoStyle.Render("Loading image...")
-		} else {
-			ext := filepath.Ext(selectedFile)
-			imageContent = infoStyle.Render(fmt.Sprintf("File: %s\nType: %s\n\nThis is not an image file.\nSelect an image file to preview.", selectedFile, ext))
-		}
+	var rightPanelContent string
+	if m.imageWidget != nil {
+		// When showing an image, we don't need any viewport content
+		// The image will be drawn over the empty panel
+		rightPanelContent = ""
 	} else {
-		imageContent = infoStyle.Render("No files found in current directory")
+		// For non-images, errors, or loading states, use the viewport
+		rightPanelContent = m.viewport.View()
 	}
-
-	m.viewport.SetContent(imageContent)
+	
 	rightPanel := panelBorderStyle.
 		Width(rightPanelWidth).
 		Height(panelHeight).
-		Render(m.viewport.View())
+		Render(rightPanelContent)
 
 	// Combine panels horizontally
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 	b.WriteString(panels)
+
+	// Append the image rendering commands AFTER the text UI has been built
+	b.WriteString(m.viewImage())
 
 	// Navigation legend
 	legend := []string{
@@ -315,13 +300,13 @@ func (m model) View() string {
 		legendKeyStyle.Render("home") + " top",
 		legendKeyStyle.Render("G") + " bottom",
 	}
-	
+
 	if termimg.KittySupported() {
-		legend = append(legend, legendKeyStyle.Render("v") + " virtual")
+		legend = append(legend, legendKeyStyle.Render("v")+" virtual")
 	}
-	legend = append(legend, legendKeyStyle.Render("g") + " grid")
-	legend = append(legend, legendKeyStyle.Render("q/esc") + " quit")
-	
+	legend = append(legend, legendKeyStyle.Render("g")+" grid")
+	legend = append(legend, legendKeyStyle.Render("q/esc")+" quit")
+
 	legendText := "Navigation: " + strings.Join(legend, " • ")
 	b.WriteString("\n")
 	b.WriteString(legendStyle.Width(m.width).Render(legendText))
@@ -330,28 +315,21 @@ func (m model) View() string {
 }
 
 // renderImageForTUI renders an image using the best available protocol
-func (m *model) renderImageForTUI(filename string) string {
+// renderImageForTUI renders an image and returns the raw escape sequence and its height in cells
+func (m *model) renderImageForTUI(filename string) (string, int) {
 	if m.imageWidget == nil {
-		return errorStyle.Render("No image widget available")
+		return errorStyle.Render("No image widget available"), 0
 	}
 
 	// Get the image widget size
 	width, height := m.imageWidget.GetSize()
-	
-	// Create a simple text representation with image info
-	var content strings.Builder
-	
-	// Add image info header
-	content.WriteString(infoStyle.Render(fmt.Sprintf("Image: %s", filename)))
-	content.WriteString("\n")
-	
+
 	// Create a new image instance for rendering
 	img, err := termimg.Open(filename)
 	if err != nil {
-		content.WriteString(errorStyle.Render("Error opening image: " + err.Error()))
-		return content.String()
+		return errorStyle.Render("Error opening image: " + err.Error()), 0
 	}
-	
+
 	// Configure dimensions
 	if width > 0 {
 		img = img.Width(width)
@@ -359,41 +337,56 @@ func (m *model) renderImageForTUI(filename string) string {
 	if height > 0 {
 		img = img.Height(height)
 	}
-	
+
 	// Apply virtual mode if enabled
 	if m.virtualMode && termimg.KittySupported() {
 		img = img.Protocol(termimg.Kitty).Virtual(true)
 	}
-	
-	// Detect and use the best available protocol
-	// This follows the hierarchy: Kitty -> iTerm2 -> Sixel -> Halfblocks
-	availableProtocols := termimg.DetermineProtocols()
-	
-	for _, protocol := range availableProtocols {
-		testImg := img.Protocol(protocol)
-		
-		rendered, err := testImg.Render()
-		if err != nil {
-			// Try next protocol
-			continue
-		}
-		
-		// Show which protocol we're using
-		content.WriteString(infoStyle.Render(fmt.Sprintf("Protocol: %s | Size: %dx%d", protocol, width, height)))
-		content.WriteString("\n\n")
-		
-		// Return the rendered content
-		// The issue might be that the escape sequences need to be properly embedded
-		content.WriteString(rendered)
-		return content.String()
+
+	// Render the image to get the escape codes
+	rendered, err := img.Render()
+	if err != nil {
+		return errorStyle.Render("Failed to render image: " + err.Error()), 0
 	}
-	
-	// If all protocols failed, show error
-	content.WriteString(errorStyle.Render("No suitable rendering protocol available"))
-	content.WriteString("\n\n")
-	content.WriteString(infoStyle.Render("Image preview unavailable"))
-	
-	return content.String()
+
+	// For graphics protocols, the text height is 0, but we need to move the cursor.
+	// The widget's height is the cell height we need to counteract.
+	return rendered, height
+}
+
+func (m *model) viewImage() string {
+	if m.imageWidget == nil || m.imageError != nil {
+		return ""
+	}
+
+	// Get the raw rendering command for the image
+	imageCmd, _ := m.renderImageForTUI(m.lastImageID)
+
+	// Get the position of the right panel to draw the image over it
+	// Title(1) + Margin(1) + Panel Border(1) + Panel Padding(1) = 4
+	imageY := 4
+	// Left Panel Width + Spacing(1) + Panel Border(1) + Panel Padding(1) = m.width/2 + 2
+	imageX := m.width/2 + 3
+
+	var finalCmd strings.Builder
+
+	// 1. Clear all previously drawn images to prevent stacking.
+	termimg.ClearAll() // This is now a valid function call
+
+	// 2. Save the cursor position.
+	finalCmd.WriteString("\033[s")
+
+	// 3. Move the cursor to the correct position inside the right panel.
+	finalCmd.WriteString(fmt.Sprintf("[%d;%dH", imageY, imageX))
+
+	// 3. Write the image rendering commands.
+	finalCmd.WriteString(imageCmd)
+
+	// 4. IMPORTANT: Move the cursor back up by the height of the image area.
+	// This prevents the image from pushing down and corrupting the layout of the text below it.
+	finalCmd.WriteString("\033[u")
+
+	return finalCmd.String()
 }
 
 func main() {
