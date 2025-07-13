@@ -127,7 +127,7 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 		// Write multipart file start
 		imageSequence.WriteString(fmt.Sprintf("]1337;MultipartFile=%s:%s\x07",
 			paramStr,
-			base64.StdEncoding.EncodeToString(data[:ITERM2_CHUNK_SIZE]),
+			Base64Encode(data[:ITERM2_CHUNK_SIZE]),
 		))
 		imageSequence.WriteString(escape)
 		imageSequence.WriteString(end)
@@ -136,7 +136,7 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 		for chunk := range slices.Chunk(data[ITERM2_CHUNK_SIZE:], ITERM2_CHUNK_SIZE) {
 			imageSequence.WriteString(start)
 			imageSequence.WriteString(fmt.Sprintf("]1337;FilePart:%s\x07",
-				base64.StdEncoding.EncodeToString(chunk),
+				Base64Encode(chunk),
 			))
 			imageSequence.WriteString(escape)
 			imageSequence.WriteString(end)
@@ -149,7 +149,7 @@ func (r *ITerm2Renderer) Render(img image.Image, opts RenderOptions) (string, er
 		imageSequence.WriteString(end)
 	} else {
 		// Format: \033]1337;File=[parameters]:[base64 data]\007
-		imageSequence.WriteString(fmt.Sprintf("%s]1337;File=%s:%s\x07", escape, paramStr, base64.StdEncoding.EncodeToString(data)))
+		imageSequence.WriteString(fmt.Sprintf("%s]1337;File=%s:%s\x07", escape, paramStr, Base64Encode(data)))
 	}
 
 	if inTmux() {
@@ -233,13 +233,6 @@ func DetectITerm2FromEnvironment() bool {
 		return true
 	}
 
-	return false
-}
-
-func DetectITerm2FromQuery() bool {
-	if _, _, _, ok := GetITerm2CellSize(); ok {
-		return true
-	}
 	return false
 }
 
@@ -369,7 +362,7 @@ func queryITerm2(query string, responseValidator func(string) bool) bool {
 	select {
 	case result := <-responseChan:
 		return result
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond):
 		// Longer timeout to ensure we consume any delayed response
 		// Try to read any remaining data to prevent it from appearing on stdout
 		go func() {

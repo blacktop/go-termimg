@@ -7,10 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/mattn/go-sixel"
-	"golang.org/x/term"
 )
 
 // SixelClearMode defines how sixel images should be cleared
@@ -249,71 +247,4 @@ func DetectSixelFromEnvironment() bool {
 	}
 
 	return false
-}
-
-// DetectSixelFromQuery uses Device Attributes query to detect Sixel support
-func DetectSixelFromQuery() bool {
-	return querySixelDeviceAttributes()
-}
-
-// querySixelDeviceAttributes sends a Device Attributes query to detect Sixel support
-func querySixelDeviceAttributes() bool {
-	// Skip query-based detection if we already know it's not supported
-	termProgram := os.Getenv("TERM_PROGRAM")
-	if termProgram == "ghostty" {
-		return false
-	}
-
-	// Open controlling terminal directly to avoid visible output
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
-		return false // Can't open tty, fall back to env detection
-	}
-	defer tty.Close()
-
-	// Check if we're in an interactive terminal
-	if !term.IsTerminal(int(tty.Fd())) {
-		return false
-	}
-
-	// Save terminal state and enter raw mode
-	oldState, err := term.MakeRaw(int(tty.Fd()))
-	if err != nil {
-		return false
-	}
-	defer term.Restore(int(tty.Fd()), oldState)
-
-	// Send Device Attributes query: ESC [ c
-	query := "\x1b[c"
-
-	// Wrap for tmux passthrough if needed
-	if inTmux() {
-		query = wrapTmuxPassthrough(query)
-	}
-
-	// Send query to terminal device directly
-	if _, err := tty.WriteString(query); err != nil {
-		return false // Fail silently to avoid polluting output
-	}
-
-	// Read response with timeout
-	responseChan := make(chan bool, 1)
-	go func() {
-		buf := make([]byte, 64)
-		n, err := tty.Read(buf)
-		if err == nil && n > 0 {
-			response := string(buf[:n])
-			// Look for ";4;" or ";4c" indicating Sixel capability
-			responseChan <- (strings.Contains(response, ";4;") || strings.Contains(response, ";4c"))
-		} else {
-			responseChan <- false
-		}
-	}()
-
-	select {
-	case result := <-responseChan:
-		return result
-	case <-time.After(200 * time.Millisecond):
-		return false
-	}
 }

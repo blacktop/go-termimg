@@ -5,10 +5,9 @@ import (
 	"image"
 	"image/color"
 	"image/color/palette"
-	"image/draw"
 	"os"
 
-	xdraw "golang.org/x/image/draw"
+	"github.com/makeworld-the-better-one/dither/v2"
 	"golang.org/x/term"
 )
 
@@ -38,7 +37,7 @@ func GetRenderer(protocol Protocol) (Renderer, error) {
 // processImage handles common image processing tasks
 func processImage(img image.Image, opts RenderOptions) (image.Image, error) {
 	// Handle resizing if dimensions are specified OR if ScaleFit mode with no dimensions (auto-detect)
-	if opts.Width > 0 || opts.Height > 0 || (opts.Width == 0 && opts.Height == 0 && opts.ScaleMode == ScaleFit) {
+	if opts.Width > 0 || opts.Height > 0 || opts.WidthPixels > 0 || opts.HeightPixels > 0 || (opts.Width == 0 && opts.Height == 0 && opts.WidthPixels == 0 && opts.HeightPixels == 0 && opts.ScaleMode == ScaleFit) {
 		img = resizeImage(img, opts)
 	}
 
@@ -55,13 +54,32 @@ func resizeImage(img image.Image, opts RenderOptions) image.Image {
 	bounds := img.Bounds()
 	srcW, srcH := bounds.Dx(), bounds.Dy()
 
-	// If no dimensions are specified, try to auto-detect terminal size for ScaleFit mode
-	if opts.Width == 0 && opts.Height == 0 {
+	// Determine target pixel dimensions
+	var targetW, targetH int
+
+	// If pixel dimensions are specified, use them directly
+	if opts.WidthPixels > 0 || opts.HeightPixels > 0 {
+		targetW = opts.WidthPixels
+		targetH = opts.HeightPixels
+	} else if opts.Width > 0 || opts.Height > 0 {
+		// Convert character cells to pixels
+		fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
+		if fontW <= 0 || fontH <= 0 {
+			fontW, fontH = 8, 16 // Fallback values
+		}
+		targetW = opts.Width * fontW
+		targetH = opts.Height * fontH
+	} else {
+		// No dimensions specified, try to auto-detect terminal size for ScaleFit mode
 		if opts.ScaleMode == ScaleFit {
 			// Try to get terminal size
 			if width, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
-				opts.Width = width
-				opts.Height = height
+				fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
+				if fontW <= 0 || fontH <= 0 {
+					fontW, fontH = 8, 16 // Fallback values
+				}
+				targetW = width * fontW
+				targetH = height * fontH
 			} else {
 				// If we can't detect terminal size, return original image
 				return img
@@ -72,27 +90,48 @@ func resizeImage(img image.Image, opts RenderOptions) image.Image {
 		}
 	}
 
-	// Get terminal font dimensions for accurate sizing from cached features
-	fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
-	if fontW <= 0 || fontH <= 0 {
-		fontW, fontH = 8, 16 // Fallback values
-	}
-
-	// Convert character cells to pixels
-	// For halfblocks, each character cell represents 1 pixel width and 2 pixels height
-	targetW := opts.Width * fontW
-	targetH := opts.Height * fontH
-
 	// Handle scale mode logic
 	switch opts.ScaleMode {
-	case ScaleNone:
-		// ScaleNone: Use specified dimensions directly, no scaling calculations
-		// If only one dimension is specified, maintain aspect ratio
-		if targetW == 0 && targetH > 0 {
-			targetW = (targetH * srcW) / srcH
-		} else if targetH == 0 && targetW > 0 {
-			targetH = (targetW * srcH) / srcW
+	case ScaleAuto:
+		// ScaleAuto: Intelligent scaling
+		if targetW > 0 && targetH > 0 {
+			// If target pixel dimensions exactly match source, no resize needed
+			if targetW == srcW && targetH == srcH {
+				return img
+			}
 		}
+
+		// If no dimensions specified, auto-detect terminal size
+		if targetW == 0 && targetH == 0 {
+			// Auto-detect terminal size
+			if width, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+				fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
+				if fontW <= 0 || fontH <= 0 {
+					fontW, fontH = 8, 16 // Fallback values
+				}
+				targetW = width * fontW
+				targetH = height * fontH
+			} else {
+				// Can't detect terminal, return original
+				return img
+			}
+		}
+
+		// If image is larger than available space, scale it down maintaining aspect ratio
+		if srcW > targetW || srcH > targetH {
+			ratioW := float64(targetW) / float64(srcW)
+			ratioH := float64(targetH) / float64(srcH)
+			ratio := min(ratioW, ratioH)
+			targetW = int(float64(srcW) * ratio)
+			targetH = int(float64(srcH) * ratio)
+		} else {
+			// Image fits, use original size
+			return img
+		}
+
+	case ScaleNone:
+		// ScaleNone: No resizing!
+		return img
 
 	case ScaleFit:
 		// ScaleFit: Fit within bounds while maintaining aspect ratio
@@ -112,17 +151,29 @@ func resizeImage(img image.Image, opts RenderOptions) image.Image {
 		}
 
 	case ScaleFill:
-		// ScaleFill: Fill bounds, potentially cropping
+		// ScaleFill: Fill bounds completely, cropping if necessary
 		if targetW == 0 && targetH > 0 {
 			targetW = (targetH * srcW) / srcH
 		} else if targetH == 0 && targetW > 0 {
 			targetH = (targetW * srcH) / srcW
 		} else if targetW > 0 && targetH > 0 {
+			// Scale to fill the container (use max ratio to ensure complete fill)
 			ratioW := float64(targetW) / float64(srcW)
 			ratioH := float64(targetH) / float64(srcH)
 			ratio := max(ratioW, ratioH)
-			targetW = int(float64(srcW) * ratio)
-			targetH = int(float64(srcH) * ratio)
+			scaledW := int(float64(srcW) * ratio)
+			scaledH := int(float64(srcH) * ratio)
+
+			// First scale the image
+			img = ResizeImage(img, uint(scaledW), uint(scaledH), opts.Path)
+
+			// Then crop to exact target dimensions if needed
+			if scaledW > targetW || scaledH > targetH {
+				img = CropImageCenter(img, targetW, targetH)
+			}
+
+			// Skip the normal resize at the end since we handled it here
+			return img
 		}
 
 	case ScaleStretch:
@@ -137,7 +188,7 @@ func resizeImage(img image.Image, opts RenderOptions) image.Image {
 
 	// Only resize if we have valid target dimensions
 	if targetW > 0 && targetH > 0 {
-		return ResizeImage(img, uint(targetW), uint(targetH))
+		return ResizeImage(img, uint(targetW), uint(targetH), opts.Path)
 	}
 
 	return img
@@ -161,22 +212,6 @@ func getDitherPalette(mode DitherMode) color.Palette {
 	}
 }
 
-// ResizeImage resizes an image to the given width and height.
-func ResizeImage(img image.Image, width, height uint) image.Image {
-	if img == nil {
-		return nil
-	}
-	if width == 0 && height == 0 {
-		return img
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
-
-	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
-
-	return dst
-}
-
 // DitherImage dithers an image using the given palette.
 func DitherImage(img image.Image, palette color.Palette) image.Image {
 	if img == nil {
@@ -186,10 +221,8 @@ func DitherImage(img image.Image, palette color.Palette) image.Image {
 		return img
 	}
 
-	bounds := img.Bounds()
-	dst := image.NewPaletted(bounds, palette)
+	d := dither.NewDitherer(palette)
+	d.Matrix = dither.FloydSteinberg
 
-	draw.FloydSteinberg.Draw(dst, bounds, img, image.Point{})
-
-	return dst
+	return d.Dither(img)
 }

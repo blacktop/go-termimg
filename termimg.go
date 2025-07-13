@@ -17,19 +17,26 @@ const (
 
 // Image represents a terminal image with a fluent API for configuration
 type Image struct {
-	source image.Image
+	Source image.Image
+	Bounds image.Rectangle
 	reader io.Reader
 	path   string
 
 	// Configuration
-	width      int
-	height     int
-	protocol   Protocol
-	scaleMode  ScaleMode
-	zIndex     int
-	virtual    bool
-	dither     bool
-	ditherMode DitherMode
+	width        int
+	height       int
+	widthPixels  int // Width in pixels instead of character cells
+	heightPixels int // Height in pixels instead of character cells
+	protocol     Protocol
+	scaleMode    ScaleMode
+	zIndex       int
+	virtual      bool
+	dither       bool
+	ditherMode   DitherMode
+	compression  bool
+	png          bool
+	tempFile     bool
+	imageNum     int
 
 	// Cached renderer
 	renderer Renderer
@@ -39,8 +46,10 @@ type Image struct {
 type ScaleMode int
 
 const (
+	// ScaleAuto intelligently scales: no resize if dimensions match, fit to terminal if too large
+	ScaleAuto ScaleMode = iota
 	// ScaleNone performs no scaling
-	ScaleNone ScaleMode = iota
+	ScaleNone
 	// ScaleFit fits the image within bounds while maintaining aspect ratio
 	ScaleFit
 	// ScaleFill fills the bounds, potentially cropping the image
@@ -72,17 +81,22 @@ type Renderer interface {
 
 	// Protocol returns the protocol type
 	Protocol() Protocol
+
+	// GetFeatures() *TerminalFeatures
 }
 
 // RenderOptions contains all options for rendering an image
 type RenderOptions struct {
-	Width      int
-	Height     int
-	ScaleMode  ScaleMode
-	ZIndex     int
-	Virtual    bool
-	Dither     bool
-	DitherMode DitherMode
+	Path         string
+	Width        int
+	Height       int
+	WidthPixels  int // Width in pixels instead of character cells
+	HeightPixels int // Height in pixels instead of character cells
+	ScaleMode    ScaleMode
+	ZIndex       int
+	Virtual      bool
+	Dither       bool
+	DitherMode   DitherMode
 
 	features *TerminalFeatures
 
@@ -104,9 +118,10 @@ func New(img image.Image) *Image {
 		return nil
 	}
 	return &Image{
-		source:    img,
+		Source:    img,
+		Bounds:    img.Bounds(),
 		protocol:  Auto,
-		scaleMode: ScaleFit,
+		scaleMode: ScaleAuto,
 	}
 }
 
@@ -115,23 +130,35 @@ func Open(path string) (*Image, error) {
 	if path == "" {
 		return nil, fmt.Errorf("path cannot be empty")
 	}
+	img, err := loadImage(path)
+	if err != nil {
+		return nil, err
+	}
 	return &Image{
+		Source:    img,
+		Bounds:    img.Bounds(),
 		path:      path,
 		protocol:  Auto,
-		scaleMode: ScaleFit,
+		scaleMode: ScaleAuto,
 	}, nil
 }
 
 // From creates a new Image from an io.Reader
-func From(r io.Reader) *Image {
+func From(r io.Reader) (*Image, error) {
 	if r == nil {
-		return nil
+		return nil, fmt.Errorf("reader cannot be nil")
+	}
+	img, _, err := image.Decode(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 	return &Image{
+		Source:    img,
+		Bounds:    img.Bounds(),
 		reader:    r,
 		protocol:  Auto,
-		scaleMode: ScaleFit,
-	}
+		scaleMode: ScaleAuto,
+	}, nil
 }
 
 // Width sets the target width in character cells
@@ -162,6 +189,41 @@ func (i *Image) Size(w, h int) *Image {
 	}
 	i.width = w
 	i.height = h
+	return i
+}
+
+// WidthPixels sets the target width in pixels
+func (i *Image) WidthPixels(w int) *Image {
+	if w < 0 {
+		w = 0
+	}
+	i.widthPixels = w
+	i.width = 0 // Clear character-based width
+	return i
+}
+
+// HeightPixels sets the target height in pixels
+func (i *Image) HeightPixels(h int) *Image {
+	if h < 0 {
+		h = 0
+	}
+	i.heightPixels = h
+	i.height = 0 // Clear character-based height
+	return i
+}
+
+// SizePixels sets both width and height in pixels
+func (i *Image) SizePixels(w, h int) *Image {
+	if w < 0 {
+		w = 0
+	}
+	if h < 0 {
+		h = 0
+	}
+	i.widthPixels = w
+	i.heightPixels = h
+	i.width = 0  // Clear character-based width
+	i.height = 0 // Clear character-based height
 	return i
 }
 
@@ -206,6 +268,30 @@ func (i *Image) DitherMode(mode DitherMode) *Image {
 	return i
 }
 
+// Compression enables zlib compression for protocols that support it
+func (i *Image) Compression(c bool) *Image {
+	i.compression = c
+	return i
+}
+
+// PNG enables PNG data transfer for protocols that support it
+func (i *Image) PNG(p bool) *Image {
+	i.png = p
+	return i
+}
+
+// TempFile enables temporary file transfer for protocols that support it
+func (i *Image) TempFile(t bool) *Image {
+	i.tempFile = t
+	return i
+}
+
+// ImageNum sets the image number for Kitty protocol
+func (i *Image) ImageNum(num int) *Image {
+	i.imageNum = num
+	return i
+}
+
 // Render generates the escape sequence string for the image
 func (i *Image) Render() (string, error) {
 	img, err := i.loadImage()
@@ -238,6 +324,20 @@ func (i *Image) Print() error {
 	return renderer.Print(img, opts)
 }
 
+// ClearAll sends a command to clear all images drawn by the Kitty protocol.
+// This is a no-op for other protocols.
+func ClearAll() error {
+	// This command is specific to the Kitty renderer, but it's safe to send
+	// as other terminals will ignore it.
+	control := "a=d"
+	output := fmt.Sprintf("\x1b_G%s\x1b", control)
+	if inTmux() {
+		output = wrapTmuxPassthrough(output)
+	}
+	_, err := io.WriteString(os.Stdout, output)
+	return err
+}
+
 // Clear removes the image from the terminal
 func (i *Image) Clear(opts ClearOptions) error {
 	renderer, err := i.getRenderer()
@@ -247,34 +347,43 @@ func (i *Image) Clear(opts ClearOptions) error {
 	return renderer.Clear(opts)
 }
 
-// ClearAll removes all images from the terminal
-func (i *Image) ClearAll() error {
-	renderer, err := i.getRenderer()
-	if err != nil {
-		return err
-	}
-	return renderer.Clear(ClearOptions{All: true})
+// GetRenderer returns the renderer associated with this image
+func (i *Image) GetRenderer() (Renderer, error) {
+	return i.getRenderer()
 }
 
-// loadImage loads the image from the configured source
+// GetSource returns the underlying image.Image
+func (i *Image) GetSource() (image.Image, error) {
+	return i.loadImage()
+}
+
+func loadImage(path string) (image.Image, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	img, _, err := image.Decode(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
+	}
+
+	return img, nil
+}
+
 func (i *Image) loadImage() (image.Image, error) {
-	if i.source != nil {
-		return i.source, nil
+	if i.Source != nil {
+		return i.Source, nil
 	}
 
 	if i.path != "" {
-		file, err := os.Open(i.path)
+		img, err := loadImage(i.path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open file: %w", err)
+			return nil, err
 		}
-		defer file.Close()
-
-		img, _, err := image.Decode(file)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode image: %w", err)
-		}
-
-		i.source = img
+		i.Source = img
+		i.Bounds = img.Bounds()
 		return img, nil
 	}
 
@@ -284,7 +393,8 @@ func (i *Image) loadImage() (image.Image, error) {
 			return nil, fmt.Errorf("failed to decode image: %w", err)
 		}
 
-		i.source = img
+		i.Source = img
+		i.Bounds = img.Bounds()
 		return img, nil
 	}
 
@@ -309,14 +419,26 @@ func (i *Image) getRenderer() (Renderer, error) {
 // buildRenderOptions creates RenderOptions from the Image configuration
 func (i *Image) buildRenderOptions() RenderOptions {
 	opts := RenderOptions{
-		Width:      i.width,
-		Height:     i.height,
-		ScaleMode:  i.scaleMode,
-		ZIndex:     i.zIndex,
-		Virtual:    i.virtual,
-		Dither:     i.dither,
-		DitherMode: i.ditherMode,
-		features:   QueryTerminalFeatures(),
+		Path:         i.path,
+		Width:        i.width,
+		Height:       i.height,
+		WidthPixels:  i.widthPixels,
+		HeightPixels: i.heightPixels,
+		ScaleMode:    i.scaleMode,
+		ZIndex:       i.zIndex,
+		Virtual:      i.virtual,
+		Dither:       i.dither,
+		DitherMode:   i.ditherMode,
+		features:     QueryTerminalFeatures(),
+	}
+
+	if i.protocol == Kitty || (i.protocol == Auto && opts.features.KittyGraphics) {
+		opts.KittyOpts = &KittyOptions{
+			Compression: i.compression,
+			PNG:         i.png,
+			TempFile:    i.tempFile,
+			ImageNum:    i.imageNum,
+		}
 	}
 
 	// Initialize SixelOptions with defaults for Sixel protocol

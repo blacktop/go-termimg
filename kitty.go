@@ -2,10 +2,11 @@ package termimg
 
 import (
 	"bytes"
-	"encoding/base64"
+	"compress/zlib"
 	"fmt"
 	"image"
 	"image/draw"
+	"image/png"
 	"io"
 	"os"
 	"strings"
@@ -73,10 +74,15 @@ type KittyOptions struct {
 	Animation    *AnimationOptions
 	Position     *PositionOptions
 	FileTransfer bool
+	Compression  bool
+	PNG          bool
+	TempFile     bool
+	ImageNum     int
 }
 
 // Global image ID counter for Kitty protocol to ensure unique IDs across all renderer instances
-var globalKittyImageID uint32
+// Initialized with process ID + timestamp to prevent conflicts between program runs
+var globalKittyImageID = uint32(os.Getpid()<<16) + uint32(time.Now().UnixMicro()&0xFFFF)
 
 // KittyRenderer implements the Renderer interface for Kitty graphics protocol
 type KittyRenderer struct {
@@ -88,6 +94,11 @@ type KittyRenderer struct {
 // Protocol returns the protocol type
 func (r *KittyRenderer) Protocol() Protocol {
 	return Kitty
+}
+
+// GetLastImageID returns the image ID that was assigned during the last render
+func (r *KittyRenderer) GetLastImageID() uint32 {
+	return r.lastID
 }
 
 // Render generates the escape sequence for displaying the image
@@ -109,9 +120,39 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	// Get raw RGBA data
 	bounds := processed.Bounds()
-	rgbaImg := image.NewRGBA(bounds)
-	draw.Draw(rgbaImg, rgbaImg.Bounds(), processed, bounds.Min, draw.Src)
-	data := rgbaImg.Pix
+	var data []byte
+	var format string
+	if opts.KittyOpts != nil && opts.KittyOpts.PNG {
+		format = "f=100"
+		var b bytes.Buffer
+		if err := png.Encode(&b, processed); err != nil {
+			return "", fmt.Errorf("failed to encode png: %w", err)
+		}
+		data = b.Bytes()
+	} else {
+		format = "f=32"
+		rgbaImg := image.NewRGBA(bounds)
+		draw.Draw(rgbaImg, rgbaImg.Bounds(), processed, bounds.Min, draw.Src)
+		data = rgbaImg.Pix
+	}
+
+	// Check for compression
+	var compressed bool
+	if opts.KittyOpts != nil && opts.KittyOpts.Compression {
+		compressed = true
+		var b bytes.Buffer
+		w, err := zlib.NewWriterLevel(&b, zlib.BestSpeed)
+		if err != nil {
+			return "", fmt.Errorf("failed to create zlib writer: %w", err)
+		}
+		if _, err := w.Write(data); err != nil {
+			return "", fmt.Errorf("failed to write to zlib writer: %w", err)
+		}
+		if err := w.Close(); err != nil {
+			return "", fmt.Errorf("failed to close zlib writer: %w", err)
+		}
+		data = b.Bytes()
+	}
 
 	// Build the escape sequence
 	var output strings.Builder
@@ -120,8 +161,11 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	pixelWidth := bounds.Dx()
 	pixelHeight := bounds.Dy()
 
-	// Get terminal font size for character cell calculations
-	fontW, fontH := getTerminalFontSize()
+	// Get terminal font size for character cell calculations from cached features
+	fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
+	if fontW <= 0 || fontH <= 0 {
+		fontW, fontH = 8, 16 // Fallback values
+	}
 	cols := pixelWidth / fontW
 	rows := pixelHeight / fontH
 
@@ -158,30 +202,60 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	}
 
 	// Build control data (with quiet mode to suppress terminal responses)
-	control := fmt.Sprintf("a=T,f=32,i=%d,s=%d,v=%d,c=%d,r=%d,q=2",
-		imageID, pixelWidth, pixelHeight, cols, rows)
+	var control string
+	var transferType string
+	if opts.KittyOpts != nil && opts.KittyOpts.TempFile {
+		transferType = ",t=t"
+	}
+
+	var imageIDStr string
+	if opts.KittyOpts != nil && opts.KittyOpts.ImageNum > 0 {
+		imageIDStr = fmt.Sprintf("I=%d", opts.KittyOpts.ImageNum)
+	} else {
+		imageIDStr = fmt.Sprintf("i=%d", imageID)
+	}
+
+	if opts.Virtual {
+		// For virtual placement, omit c= and r= to let Unicode placeholders control sizing
+		control = fmt.Sprintf("a=T,%s,%s,s=%d,v=%d,q=2%s",
+			format, imageIDStr, pixelWidth, pixelHeight, transferType)
+	} else {
+		// For direct placement, include display dimensions
+		control = fmt.Sprintf("a=T,%s,%s,s=%d,v=%d,c=%d,r=%d,q=2%s",
+			format, imageIDStr, pixelWidth, pixelHeight, cols, rows, transferType)
+	}
 
 	// Add z-index if specified
 	if opts.ZIndex > 0 {
 		control += fmt.Sprintf(",z=%d", opts.ZIndex)
 	}
 
-	// Add virtual placement if specified
+	if compressed {
+		control += ",o=z"
+	}
+
+	// Add virtual placement flag if specified
 	if opts.Virtual {
 		control += ",U=1"
 	}
 
-	// Send the image data in chunks
+	// Send the image data in chunks using optimized encoding
 	first := true
-	for i := 0; i < len(data); i += r.chunkSize {
-		end := min(i+r.chunkSize, len(data))
-		chunk := data[i:end]
-		encodedChunk := base64.StdEncoding.EncodeToString(chunk)
+
+	// Use parallel encoding for large data
+	var encodedChunks []string
+	if len(data) > r.chunkSize*4 {
+		encodedChunks = ParallelBase64Encode(data, r.chunkSize)
+	} else {
+		encodedChunks = ChunkedBase64Encode(data, r.chunkSize)
+	}
+
+	for i, encodedChunk := range encodedChunks {
 
 		var chunkSequence string
 		if first {
 			first = false
-			if len(data) > r.chunkSize {
+			if len(encodedChunks) > 1 {
 				// More chunks to come
 				chunkSequence = fmt.Sprintf("\x1b_G%s,m=1;%s\x1b\\", control, encodedChunk)
 			} else {
@@ -189,7 +263,7 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 				chunkSequence = fmt.Sprintf("\x1b_G%s;%s\x1b\\", control, encodedChunk)
 			}
 		} else {
-			if end < len(data) {
+			if i < len(encodedChunks)-1 {
 				// Continuation chunk
 				chunkSequence = fmt.Sprintf("\x1b_Gm=1,q=2;%s\x1b\\", encodedChunk)
 			} else {
@@ -198,7 +272,11 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 			}
 		}
 
-		output.WriteString(wrapTmuxPassthrough(chunkSequence))
+		if inTmux() {
+			chunkSequence = wrapTmuxPassthrough(chunkSequence)
+		}
+
+		output.WriteString(chunkSequence)
 	}
 
 	// Handle Kitty-specific options
@@ -278,7 +356,9 @@ func (r *KittyRenderer) Clear(opts ClearOptions) error {
 	}
 
 	output := fmt.Sprintf("\x1b_G%s\x1b\\", control)
-	output = wrapTmuxPassthrough(output)
+	if inTmux() {
+		output = wrapTmuxPassthrough(output)
+	}
 	_, err := io.WriteString(os.Stdout, output)
 	return err
 }
@@ -307,29 +387,55 @@ func (r *KittyRenderer) AnimateImages(imageIDs []string, delayMs int, loops int)
 		strings.Join(imageIDs, ":"), delayMs, loops)
 
 	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-	output = wrapTmuxPassthrough(output)
-
+	if inTmux() {
+		output = wrapTmuxPassthrough(output)
+	}
 	_, err := io.WriteString(os.Stdout, output)
 	return err
 }
 
-// PlaceImage positions a previously transferred image at specific coordinates
+// PlaceImage positions a previously transferred virtual image at specific coordinates using Unicode placeholders
 func (r *KittyRenderer) PlaceImage(imageID string, xCells, yCells, zIndex int) error {
+	return r.PlaceImageWithSize(imageID, xCells, yCells, zIndex, 20, 10) // Default size
+}
+
+// PlaceImageWithSize positions a virtual image with specific dimensions in character cells
+func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zIndex, widthCells, heightCells int) error {
 	if imageID == "" {
 		return fmt.Errorf("image ID is required for placement")
 	}
 
-	// Build placement control sequence
-	control := fmt.Sprintf("a=p,i=%s,x=%d,y=%d", imageID, xCells, yCells)
-
-	if zIndex > 0 {
-		control += fmt.Sprintf(",z=%d", zIndex)
+	// Convert imageID string to uint32 for placeholder generation
+	var imgID uint32
+	if _, err := fmt.Sscanf(imageID, "%d", &imgID); err != nil {
+		return fmt.Errorf("invalid image ID format: %w", err)
 	}
 
-	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-	output = wrapTmuxPassthrough(output)
+	var output strings.Builder
 
-	_, err := io.WriteString(os.Stdout, output)
+	// Save current cursor position
+	output.WriteString("\x1b[s")
+
+	// Move to the starting position (absolute)
+	// Kitty's graphics protocol expects absolute positioning for the image block
+	// The +1 is because terminal coordinates are 1-based
+	output.WriteString(fmt.Sprintf("\x1b[%d;%dH", yCells+1, xCells+1))
+
+	// Generate the placeholder area string using the corrected RenderPlaceholderAreaWithImageID
+	// This function will handle the color encoding and internal relative positioning
+	area := CreatePlaceholderArea(imgID, uint16(heightCells), uint16(widthCells))
+	placeholders := RenderPlaceholderAreaWithImageID(area, imgID)
+	output.WriteString(placeholders)
+
+	// Reset color and restore cursor position
+	output.WriteString("\x1b[39m") // Reset color
+	output.WriteString("\x1b[u")   // Restore cursor
+	if inTmux() {
+		result := wrapTmuxPassthrough(output.String())
+		_, err := io.WriteString(os.Stdout, result)
+		return err
+	}
+	_, err := io.WriteString(os.Stdout, output.String())
 	return err
 }
 
@@ -357,12 +463,13 @@ func (r *KittyRenderer) SendFile(filePath string, opts RenderOptions) error {
 	}
 
 	// Encode file path
-	encodedPath := base64.StdEncoding.EncodeToString([]byte(filePath))
+	encodedPath := Base64Encode([]byte(filePath))
 
 	// Build the escape sequence (quiet mode already included in control)
 	output := fmt.Sprintf("\x1b_G%s;%s\x1b\\", control, encodedPath)
-	output = wrapTmuxPassthrough(output)
-
+	if inTmux() {
+		output = wrapTmuxPassthrough(output)
+	}
 	_, err := io.WriteString(os.Stdout, output)
 	return err
 }
@@ -376,7 +483,9 @@ func (r *KittyRenderer) ClearVirtualImage(imageID string) error {
 	// Build delete control sequence specifically for virtual images
 	control := fmt.Sprintf("a=d,d=i,i=%s", imageID)
 	output := fmt.Sprintf("\x1b_G%s,q=1\x1b\\", control)
-	output = wrapTmuxPassthrough(output)
+	if inTmux() {
+		output = wrapTmuxPassthrough(output)
+	}
 
 	_, err := io.WriteString(os.Stdout, output)
 	return err
@@ -504,32 +613,39 @@ func CreatePlaceholderArea(imageID uint32, rows, columns uint16) [][]string {
 	return area
 }
 
-// RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper color encoding
-// The image ID is encoded in the ANSI foreground color as per Kitty specification
+// RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper positioning
+// Each placeholder is positioned at the current cursor location plus row/column offsets
 func RenderPlaceholderAreaWithImageID(area [][]string, imageID uint32) string {
 	var builder strings.Builder
 
-	// Set color once at the beginning to encode image ID
-	// Use simple color encoding - image ID modulo 256 for each RGB component
+	// Build color encoding for the image ID (matching ratatui-image implementation)
 	colorCode := imageID & 0xFFFFFF
-	r := (colorCode >> 16) & 0xFF
-	g := (colorCode >> 8) & 0xFF
-	b := colorCode & 0xFF
+	red := (colorCode >> 16) & 0xFF
+	green := (colorCode >> 8) & 0xFF
+	blue := colorCode & 0xFF
+
+	// Save current cursor position
+	builder.WriteString("\x1b[s")
 
 	// Set foreground color to encode image ID
-	builder.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b))
+	builder.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue))
 
-	for i, row := range area {
+	// Render each row with proper positioning
+	for rowIdx, row := range area {
 		for _, placeholder := range row {
+			// Write the placeholder at this position
+			// The diacritics in the placeholder itself encode the row and column
 			builder.WriteString(placeholder)
 		}
-		if i < len(area)-1 {
-			builder.WriteString("\n")
+		// After each row, move to the beginning of the next line
+		if rowIdx < len(area)-1 {
+			builder.WriteString("\n") // Newline moves to the next line, column 0
 		}
 	}
 
-	// Reset color at the end
+	// Reset color and restore cursor position
 	builder.WriteString("\x1b[39m")
+	builder.WriteString("\x1b[u")
 
 	return builder.String()
 }
@@ -612,71 +728,4 @@ func DetectKittyFromEnvironment() bool {
 	}
 
 	return false
-}
-
-// DetectKittyFromQuery uses Kitty graphics query to detect Kitty protocol support
-func DetectKittyFromQuery() bool {
-	return queryKittyGraphics()
-}
-
-// queryKittyGraphics sends a Kitty graphics query and checks for a response
-func queryKittyGraphics() bool {
-	// Skip query-based detection if we already know it's not Kitty from environment
-	termProgram := os.Getenv("TERM_PROGRAM")
-	if termProgram == "Apple_Terminal" || termProgram == "Terminal" {
-		return false
-	}
-
-	// Open controlling terminal directly to avoid visible output
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
-		return false // Can't open tty, fall back to env detection
-	}
-	defer tty.Close()
-
-	// Check if we're in an interactive terminal
-	if !term.IsTerminal(int(tty.Fd())) {
-		return false
-	}
-
-	// Save terminal state and enter raw mode
-	oldState, err := term.MakeRaw(int(tty.Fd()))
-	if err != nil {
-		return false
-	}
-	defer term.Restore(int(tty.Fd()), oldState)
-
-	// Send Kitty graphics query: ESC _ G a=q,t=d,f=24,i=42,s=1,v=1 ; AAAA ESC \
-	query := "\x1b_Gi=42,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
-
-	// Wrap for tmux passthrough if needed
-	if inTmux() {
-		query = wrapTmuxPassthrough(query)
-	}
-
-	// Send query to terminal device directly
-	if _, err := tty.WriteString(query); err != nil {
-		return false // Fail silently to avoid polluting output
-	}
-
-	// Read response with timeout
-	responseChan := make(chan bool, 1)
-	go func() {
-		buf := make([]byte, 256)
-		n, err := tty.Read(buf)
-		if err == nil && n > 0 {
-			response := string(buf[:n])
-			// Look for the image ID (42) in the response
-			responseChan <- strings.Contains(response, "42")
-		} else {
-			responseChan <- false
-		}
-	}()
-
-	select {
-	case result := <-responseChan:
-		return result
-	case <-time.After(200 * time.Millisecond):
-		return false
-	}
 }
