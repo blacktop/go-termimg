@@ -2,6 +2,8 @@
 
 An interactive terminal image gallery that showcases the capabilities of go-termimg, including advanced Kitty virtual placement features.
 
+![demo](./gallery.webp)
+
 ## Features
 
 ### Standard Mode
@@ -35,15 +37,15 @@ An interactive terminal image gallery that showcases the capabilities of go-term
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| ↑/k | Move up |
-| ↓/j | Move down |
-| pgup/pgdn | Page up/down |
-| home/end | Jump to first/last |
-| v | Toggle virtual mode (Kitty only) |
-| g | Toggle grid view |
-| q/ESC | Quit |
+| Key       | Action                           |
+| --------- | -------------------------------- |
+| ↑/k       | Move up                          |
+| ↓/j       | Move down                        |
+| pgup/pgdn | Page up/down                     |
+| home/end  | Jump to first/last               |
+| v         | Toggle virtual mode (Kitty only) |
+| g         | Toggle grid view                 |
+| q/ESC     | Quit                             |
 
 ## Virtual Placement Benefits
 
