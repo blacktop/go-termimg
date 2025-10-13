@@ -1,6 +1,6 @@
 module github.com/blacktop/go-termimg
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/charmbracelet/x/mosaic v0.0.0-20250702191427-5bdfc8f2e4ff
@@ -8,7 +8,7 @@ require (
 	github.com/mattn/go-sixel v0.0.5
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/stretchr/testify v1.11.0
-	golang.org/x/term v0.34.0
+	golang.org/x/term v0.36.0
 )
 
 require (
@@ -20,6 +20,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/soniakeys/quant v1.0.0 // indirect
 	golang.org/x/image v0.29.0 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
