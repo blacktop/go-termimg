@@ -3,12 +3,12 @@ module github.com/blacktop/go-termimg
 go 1.24.2
 
 require (
-	github.com/charmbracelet/x/mosaic v0.0.0-20251106172358-54469c29c2bc
+	github.com/charmbracelet/x/mosaic v0.0.0-20251118172736-77d017256798
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0
 	github.com/mattn/go-sixel v0.0.5
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/term v0.36.0
+	golang.org/x/term v0.37.0
 )
 
 require (
@@ -22,6 +22,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/soniakeys/quant v1.0.0 // indirect
 	golang.org/x/image v0.32.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
