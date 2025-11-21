@@ -338,6 +338,18 @@ func ClearAll() error {
 	return err
 }
 
+// ClearAllString returns a command to clear all images drawn by the Kitty protocol as a string.
+func ClearAllString() string {
+	// This command is specific to the Kitty renderer, but it's safe to send
+	// as other terminals will ignore it.
+	control := "a=d"
+	output := fmt.Sprintf("\x1b_G%s\x1b", control)
+	if inTmux() {
+		output = wrapTmuxPassthrough(output)
+	}
+	return output
+}
+
 // Clear removes the image from the terminal
 func (i *Image) Clear(opts ClearOptions) error {
 	renderer, err := i.getRenderer()
