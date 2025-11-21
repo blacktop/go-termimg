@@ -11,6 +11,8 @@ require (
 	golang.org/x/term v0.37.0
 )
 
+replace github.com/charmbracelet/x/cellbuf => github.com/charmbracelet/x/cellbuf v0.0.14
+
 require (
 	github.com/charmbracelet/x/ansi v0.11.0 // indirect
 	github.com/clipperhouse/displaywidth v0.4.1 // indirect
