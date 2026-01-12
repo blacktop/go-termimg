@@ -399,7 +399,10 @@ func (r *KittyRenderer) PlaceImage(imageID string, xCells, yCells, zIndex int) e
 	return r.PlaceImageWithSize(imageID, xCells, yCells, zIndex, 20, 10) // Default size
 }
 
-// PlaceImageWithSize positions a virtual image with specific dimensions in character cells
+// PlaceImageWithSize positions a virtual image with specific dimensions in character cells.
+// This function moves the cursor to the specified position and renders the placeholders there.
+// The cursor will end up after the last placeholder (not restored to original position)
+// to allow proper content flow and scrolling.
 func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zIndex, widthCells, heightCells int) error {
 	if imageID == "" {
 		return fmt.Errorf("image ID is required for placement")
@@ -413,23 +416,16 @@ func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zInde
 
 	var output strings.Builder
 
-	// Save current cursor position
-	output.WriteString("\x1b[s")
-
 	// Move to the starting position (absolute)
-	// Kitty's graphics protocol expects absolute positioning for the image block
-	// The +1 is because terminal coordinates are 1-based
+	// Terminal coordinates are 1-based
 	output.WriteString(fmt.Sprintf("\x1b[%d;%dH", yCells+1, xCells+1))
 
-	// Generate the placeholder area string using the corrected RenderPlaceholderAreaWithImageID
-	// This function will handle the color encoding and internal relative positioning
+	// Generate the placeholder area string
+	// RenderPlaceholderAreaWithImageID handles color encoding and does NOT save/restore cursor
 	area := CreatePlaceholderArea(imgID, uint16(heightCells), uint16(widthCells))
 	placeholders := RenderPlaceholderAreaWithImageID(area, imgID)
 	output.WriteString(placeholders)
 
-	// Reset color and restore cursor position
-	output.WriteString("\x1b[39m") // Reset color
-	output.WriteString("\x1b[u")   // Restore cursor
 	if inTmux() {
 		result := wrapTmuxPassthrough(output.String())
 		_, err := io.WriteString(os.Stdout, result)
@@ -613,39 +609,45 @@ func CreatePlaceholderArea(imageID uint32, rows, columns uint16) [][]string {
 	return area
 }
 
-// RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper positioning
-// Each placeholder is positioned at the current cursor location plus row/column offsets
+// RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper positioning.
+// The placeholders are rendered inline at the current cursor position and will scroll with content.
+// NOTE: We intentionally do NOT save/restore cursor position - the placeholders ARE the content
+// and should remain where they are rendered for proper scrolling behavior.
 func RenderPlaceholderAreaWithImageID(area [][]string, imageID uint32) string {
 	var builder strings.Builder
 
-	// Build color encoding for the image ID (matching ratatui-image implementation)
-	colorCode := imageID & 0xFFFFFF
-	red := (colorCode >> 16) & 0xFF
-	green := (colorCode >> 8) & 0xFF
-	blue := colorCode & 0xFF
-
-	// Save current cursor position
-	builder.WriteString("\x1b[s")
+	// Build color encoding for the image ID
+	// For IDs <= 255, use 256-color mode for better compatibility
+	// For larger IDs, use 24-bit RGB encoding
+	var colorStart string
+	if imageID <= 255 {
+		colorStart = fmt.Sprintf("\x1b[38;5;%dm", imageID)
+	} else {
+		// Encode ID in RGB: R = id & 0xFF, G = (id >> 8) & 0xFF, B = (id >> 16) & 0xFF
+		r := imageID & 0xFF
+		g := (imageID >> 8) & 0xFF
+		b := (imageID >> 16) & 0xFF
+		colorStart = fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+	}
 
 	// Set foreground color to encode image ID
-	builder.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue))
+	builder.WriteString(colorStart)
 
-	// Render each row with proper positioning
+	// Render each row
 	for rowIdx, row := range area {
 		for _, placeholder := range row {
-			// Write the placeholder at this position
-			// The diacritics in the placeholder itself encode the row and column
 			builder.WriteString(placeholder)
 		}
-		// After each row, move to the beginning of the next line
+		// After each row (except last), reset color, newline, then restore color
+		// This ensures proper color handling across line boundaries
 		if rowIdx < len(area)-1 {
-			builder.WriteString("\n") // Newline moves to the next line, column 0
+			builder.WriteString("\x1b[39m\n")
+			builder.WriteString(colorStart)
 		}
 	}
 
-	// Reset color and restore cursor position
+	// Reset foreground color at the end
 	builder.WriteString("\x1b[39m")
-	builder.WriteString("\x1b[u")
 
 	return builder.String()
 }
