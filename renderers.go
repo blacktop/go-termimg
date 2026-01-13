@@ -36,8 +36,14 @@ func GetRenderer(protocol Protocol) (Renderer, error) {
 
 // processImage handles common image processing tasks
 func processImage(img image.Image, opts RenderOptions) (image.Image, error) {
+	// When using Unicode placeholders for Kitty protocol, don't pre-resize the image.
+	// The terminal will scale the full-resolution image to fit the placeholder grid.
+	// This preserves image quality and matches the expected behavior.
+	useUnicode := opts.KittyOpts != nil && opts.KittyOpts.UseUnicode
+
 	// Handle resizing if dimensions are specified OR if ScaleFit mode with no dimensions (auto-detect)
-	if opts.Width > 0 || opts.Height > 0 || opts.WidthPixels > 0 || opts.HeightPixels > 0 || (opts.Width == 0 && opts.Height == 0 && opts.WidthPixels == 0 && opts.HeightPixels == 0 && opts.ScaleMode == ScaleFit) {
+	// Skip resizing when using Unicode placeholders - terminal handles scaling
+	if !useUnicode && (opts.Width > 0 || opts.Height > 0 || opts.WidthPixels > 0 || opts.HeightPixels > 0 || (opts.Width == 0 && opts.Height == 0 && opts.WidthPixels == 0 && opts.HeightPixels == 0 && opts.ScaleMode == ScaleFit)) {
 		img = resizeImage(img, opts)
 	}
 
