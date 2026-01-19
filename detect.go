@@ -312,6 +312,13 @@ func ParallelProtocolDetection() (kitty, sixel, iterm2 bool) {
 		results.kitty = true
 	}
 
+	// If we've already detected a graphics protocol from environment variables,
+	// skip all terminal queries to avoid leaving garbage in the input buffer.
+	// This prevents issues with TUI frameworks like bubbletea that read from stdin.
+	if results.kitty || results.iterm2 {
+		return results.kitty, results.sixel, results.iterm2
+	}
+
 	// Skip queries if not interactive
 	if !isInteractiveTerminal() {
 		return results.kitty, results.sixel, results.iterm2

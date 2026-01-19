@@ -39,6 +39,33 @@ func generateCacheKey(width, height uint, path string, srcBounds image.Rectangle
 	return fmt.Sprintf("%dx%d_%s_%dx%d", width, height, path, srcBounds.Dx(), srcBounds.Dy())
 }
 
+// get retrieves an image from the cache, updating access time atomically.
+// Returns nil if the key is not found. This method uses a single write lock
+// to avoid TOCTOU race conditions between checking existence and updating access.
+func (rc *ResizeCache) get(key string) image.Image {
+	rc.mutex.Lock()
+	defer rc.mutex.Unlock()
+
+	entry, exists := rc.cache[key]
+	if !exists {
+		return nil
+	}
+
+	// Update access time
+	entry.lastUsed = time.Now().Unix()
+
+	// Move to front of access order (most recently used)
+	for i, k := range rc.accessOrder {
+		if k == key {
+			rc.accessOrder = append(rc.accessOrder[:i], rc.accessOrder[i+1:]...)
+			break
+		}
+	}
+	rc.accessOrder = append([]string{key}, rc.accessOrder...)
+
+	return entry.image
+}
+
 // ResizeImage provides faster image resizing with caching and optimizations
 func ResizeImage(img image.Image, width, height uint, path string) image.Image {
 	bounds := img.Bounds()
@@ -48,16 +75,11 @@ func ResizeImage(img image.Image, width, height uint, path string) image.Image {
 		return img
 	}
 
-	// Check cache first
+	// Check cache first using thread-safe get
 	cacheKey := generateCacheKey(width, height, path, bounds)
-	globalResizeCache.mutex.RLock()
-	if entry, exists := globalResizeCache.cache[cacheKey]; exists {
-		globalResizeCache.mutex.RUnlock()
-		// Update access time
-		globalResizeCache.updateAccess(cacheKey)
-		return entry.image
+	if cached := globalResizeCache.get(cacheKey); cached != nil {
+		return cached
 	}
-	globalResizeCache.mutex.RUnlock()
 
 	// Use fastest interpolation for large images
 	var interp resize.InterpolationFunction
@@ -83,28 +105,6 @@ func ResizeImage(img image.Image, width, height uint, path string) image.Image {
 // FastResize skips quality for speed - use for previews/thumbnails
 func FastResize(img image.Image, width, height uint) image.Image {
 	return resize.Resize(width, height, img, resize.NearestNeighbor)
-}
-
-// updateAccess moves a key to the front of the access order (most recently used)
-func (rc *ResizeCache) updateAccess(key string) {
-	rc.mutex.Lock()
-	defer rc.mutex.Unlock()
-
-	// Remove key from current position
-	for i, k := range rc.accessOrder {
-		if k == key {
-			rc.accessOrder = append(rc.accessOrder[:i], rc.accessOrder[i+1:]...)
-			break
-		}
-	}
-
-	// Add to front (most recently used)
-	rc.accessOrder = append([]string{key}, rc.accessOrder...)
-
-	// Update last used time
-	if entry, exists := rc.cache[key]; exists {
-		entry.lastUsed = time.Now().Unix()
-	}
 }
 
 // set adds or updates an entry in the cache with LRU eviction

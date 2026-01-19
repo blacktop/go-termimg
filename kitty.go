@@ -84,10 +84,15 @@ type KittyOptions struct {
 // Initialized with process ID + timestamp to prevent conflicts between program runs
 var globalKittyImageID = uint32(os.Getpid()<<16) + uint32(time.Now().UnixMicro()&0xFFFF)
 
+// Global image number counter for Unicode placeholders - must fit in 24 bits for RGB encoding
+// Starts at 1 to avoid 0 (which would be invisible in some color modes)
+var globalKittyImageNum uint32 = 1
+
 // KittyRenderer implements the Renderer interface for Kitty graphics protocol
 type KittyRenderer struct {
 	imageID   uint32
 	lastID    uint32
+	lastNum   uint32 // Last image number used for Unicode placeholders
 	chunkSize int
 }
 
@@ -118,8 +123,99 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	imageID := atomic.AddUint32(&globalKittyImageID, 1)
 	r.lastID = imageID
 
-	// Get raw RGBA data
+	// Get image bounds
 	bounds := processed.Bounds()
+
+	// Build the escape sequence
+	var output strings.Builder
+
+	// Calculate dimensions in cells
+	fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
+	if fontW <= 0 || fontH <= 0 {
+		fontW, fontH = 8, 16 // Fallback values
+	}
+	pixelWidth := bounds.Dx()
+	pixelHeight := bounds.Dy()
+	cols := pixelWidth / fontW
+	rows := pixelHeight / fontH
+
+	// If dimensions were specified in options, use those
+	if opts.Width > 0 {
+		cols = opts.Width
+	}
+	if opts.Height > 0 {
+		rows = opts.Height
+	}
+
+	// Check if using Unicode placeholders - this requires a different two-step approach
+	useUnicode := opts.KittyOpts != nil && opts.KittyOpts.UseUnicode
+
+	if useUnicode {
+		// Two-step process for Unicode placeholders (matches old termimg behavior):
+		// 1. Transmit image data (no display) using PNG format
+		// 2. Create placement with U=1 and explicit cols/rows
+		// 3. Generate placeholder characters
+
+		// Use a small image ID that fits in 24 bits for RGB foreground color encoding
+		imageNum := atomic.AddUint32(&globalKittyImageNum, 1)
+		if imageNum > 0xFFFFFF {
+			atomic.StoreUint32(&globalKittyImageNum, 1)
+			imageNum = 1
+		}
+		r.lastNum = imageNum
+
+		// Encode as PNG for transmission
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, processed); err != nil {
+			return "", fmt.Errorf("failed to encode png: %w", err)
+		}
+		data := buf.Bytes()
+		encoded := Base64Encode(data)
+
+		// Step 1: Transmit image data in chunks (no display)
+		// Format: f=100 (PNG), t=d (direct), i=<id>, q=2 (quiet)
+		remaining := encoded
+		first := true
+		for len(remaining) > 0 {
+			chunk := remaining
+			more := 0
+			if len(remaining) > r.chunkSize {
+				chunk = remaining[:r.chunkSize]
+				remaining = remaining[r.chunkSize:]
+				more = 1
+			} else {
+				remaining = ""
+			}
+
+			var seq string
+			if first {
+				seq = fmt.Sprintf("\x1b_Gf=100,t=d,i=%d,q=2,m=%d;%s\x1b\\", imageNum, more, chunk)
+				first = false
+			} else {
+				seq = fmt.Sprintf("\x1b_Gm=%d;%s\x1b\\", more, chunk)
+			}
+			if inTmux() {
+				seq = wrapTmuxPassthrough(seq)
+			}
+			output.WriteString(seq)
+		}
+
+		// Step 2: Create virtual placement with Unicode mode
+		// Format: a=p (placement), U=1 (unicode), i=<id>, c=<cols>, r=<rows>, q=2
+		placementSeq := fmt.Sprintf("\x1b_Ga=p,U=1,i=%d,c=%d,r=%d,q=2\x1b\\", imageNum, cols, rows)
+		if inTmux() {
+			placementSeq = wrapTmuxPassthrough(placementSeq)
+		}
+		output.WriteString(placementSeq)
+
+		// Step 3: Generate placeholder characters
+		placeholders := r.generateUnicodePlaceholders(imageNum, cols, rows)
+		output.WriteString(placeholders)
+
+		return output.String(), nil
+	}
+
+	// Standard (non-Unicode) rendering path
 	var data []byte
 	var format string
 	if opts.KittyOpts != nil && opts.KittyOpts.PNG {
@@ -154,95 +250,53 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		data = b.Bytes()
 	}
 
-	// Build the escape sequence
-	var output strings.Builder
-
-	// Calculate dimensions
-	pixelWidth := bounds.Dx()
-	pixelHeight := bounds.Dy()
-
-	// Get terminal font size for character cell calculations from cached features
-	fontW, fontH := opts.features.FontWidth, opts.features.FontHeight
-	if fontW <= 0 || fontH <= 0 {
-		fontW, fontH = 8, 16 // Fallback values
-	}
-	cols := pixelWidth / fontW
-	rows := pixelHeight / fontH
-
-	// If dimensions were specified in options, use those
-	if opts.Width > 0 {
-		cols = opts.Width
-	}
-	if opts.Height > 0 {
-		rows = opts.Height
-	}
-
 	// If no dimensions specified, auto-detect terminal size
 	if opts.Width == 0 && opts.Height == 0 && opts.ScaleMode == ScaleFit {
 		if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
-			// For ScaleFit mode, calculate the scaling to fit within terminal
 			srcW := float64(pixelWidth)
 			srcH := float64(pixelHeight)
-
-			// Convert terminal cells to approximate pixels
 			termPixelW := float64(termWidth * fontW)
 			termPixelH := float64(termHeight * fontH)
-
-			// Calculate scaling ratios
 			ratioW := termPixelW / srcW
 			ratioH := termPixelH / srcH
-
-			// Use the smaller ratio to fit within bounds
 			ratio := min(ratioW, ratioH)
-
-			// Calculate final dimensions in cells
 			cols = int((srcW * ratio) / float64(fontW))
 			rows = int((srcH * ratio) / float64(fontH))
 		}
 	}
 
-	// Build control data (with quiet mode to suppress terminal responses)
+	// Build control data
 	var control string
 	var transferType string
 	if opts.KittyOpts != nil && opts.KittyOpts.TempFile {
 		transferType = ",t=t"
 	}
 
-	var imageIDStr string
+	imageIDStr := fmt.Sprintf("i=%d", imageID)
 	if opts.KittyOpts != nil && opts.KittyOpts.ImageNum > 0 {
 		imageIDStr = fmt.Sprintf("I=%d", opts.KittyOpts.ImageNum)
-	} else {
-		imageIDStr = fmt.Sprintf("i=%d", imageID)
 	}
 
 	if opts.Virtual {
-		// For virtual placement, omit c= and r= to let Unicode placeholders control sizing
 		control = fmt.Sprintf("a=T,%s,%s,s=%d,v=%d,q=2%s",
 			format, imageIDStr, pixelWidth, pixelHeight, transferType)
 	} else {
-		// For direct placement, include display dimensions
 		control = fmt.Sprintf("a=T,%s,%s,s=%d,v=%d,c=%d,r=%d,q=2%s",
 			format, imageIDStr, pixelWidth, pixelHeight, cols, rows, transferType)
 	}
 
-	// Add z-index if specified
 	if opts.ZIndex > 0 {
 		control += fmt.Sprintf(",z=%d", opts.ZIndex)
 	}
-
 	if compressed {
 		control += ",o=z"
 	}
-
-	// Add virtual placement flag if specified
 	if opts.Virtual {
 		control += ",U=1"
 	}
 
-	// Send the image data in chunks using optimized encoding
+	// Send the image data in chunks
 	first := true
-
-	// Use parallel encoding for large data
 	var encodedChunks []string
 	if len(data) > r.chunkSize*4 {
 		encodedChunks = ParallelBase64Encode(data, r.chunkSize)
@@ -251,38 +305,31 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	}
 
 	for i, encodedChunk := range encodedChunks {
-
 		var chunkSequence string
 		if first {
 			first = false
 			if len(encodedChunks) > 1 {
-				// More chunks to come
 				chunkSequence = fmt.Sprintf("\x1b_G%s,m=1;%s\x1b\\", control, encodedChunk)
 			} else {
-				// Single chunk
 				chunkSequence = fmt.Sprintf("\x1b_G%s;%s\x1b\\", control, encodedChunk)
 			}
 		} else {
 			if i < len(encodedChunks)-1 {
-				// Continuation chunk
 				chunkSequence = fmt.Sprintf("\x1b_Gm=1,q=2;%s\x1b\\", encodedChunk)
 			} else {
-				// Last chunk
 				chunkSequence = fmt.Sprintf("\x1b_Gm=0,q=2;%s\x1b\\", encodedChunk)
 			}
 		}
-
 		if inTmux() {
 			chunkSequence = wrapTmuxPassthrough(chunkSequence)
 		}
-
 		output.WriteString(chunkSequence)
 	}
 
-	// Handle Kitty-specific options
+	// Handle non-unicode Kitty options
 	if opts.KittyOpts != nil {
-		// If virtual placement with unicode, generate placeholders
-		if opts.Virtual && opts.KittyOpts.UseUnicode {
+		if opts.Virtual && !opts.KittyOpts.UseUnicode {
+			// Non-unicode virtual placement - just generate simple placeholders
 			placeholders := r.generateUnicodePlaceholders(imageID, cols, rows)
 			output.WriteString(placeholders)
 		}
@@ -399,7 +446,10 @@ func (r *KittyRenderer) PlaceImage(imageID string, xCells, yCells, zIndex int) e
 	return r.PlaceImageWithSize(imageID, xCells, yCells, zIndex, 20, 10) // Default size
 }
 
-// PlaceImageWithSize positions a virtual image with specific dimensions in character cells
+// PlaceImageWithSize positions a virtual image with specific dimensions in character cells.
+// This function moves the cursor to the specified position and renders the placeholders there.
+// The cursor will end up after the last placeholder (not restored to original position)
+// to allow proper content flow and scrolling.
 func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zIndex, widthCells, heightCells int) error {
 	if imageID == "" {
 		return fmt.Errorf("image ID is required for placement")
@@ -413,23 +463,16 @@ func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zInde
 
 	var output strings.Builder
 
-	// Save current cursor position
-	output.WriteString("\x1b[s")
-
 	// Move to the starting position (absolute)
-	// Kitty's graphics protocol expects absolute positioning for the image block
-	// The +1 is because terminal coordinates are 1-based
+	// Terminal coordinates are 1-based
 	output.WriteString(fmt.Sprintf("\x1b[%d;%dH", yCells+1, xCells+1))
 
-	// Generate the placeholder area string using the corrected RenderPlaceholderAreaWithImageID
-	// This function will handle the color encoding and internal relative positioning
+	// Generate the placeholder area string
+	// RenderPlaceholderAreaWithImageID handles color encoding and does NOT save/restore cursor
 	area := CreatePlaceholderArea(imgID, uint16(heightCells), uint16(widthCells))
 	placeholders := RenderPlaceholderAreaWithImageID(area, imgID)
 	output.WriteString(placeholders)
 
-	// Reset color and restore cursor position
-	output.WriteString("\x1b[39m") // Reset color
-	output.WriteString("\x1b[u")   // Restore cursor
 	if inTmux() {
 		result := wrapTmuxPassthrough(output.String())
 		_, err := io.WriteString(os.Stdout, result)
@@ -613,39 +656,45 @@ func CreatePlaceholderArea(imageID uint32, rows, columns uint16) [][]string {
 	return area
 }
 
-// RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper positioning
-// Each placeholder is positioned at the current cursor location plus row/column offsets
+// RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper positioning.
+// The placeholders are rendered inline at the current cursor position and will scroll with content.
+// NOTE: We intentionally do NOT save/restore cursor position - the placeholders ARE the content
+// and should remain where they are rendered for proper scrolling behavior.
 func RenderPlaceholderAreaWithImageID(area [][]string, imageID uint32) string {
 	var builder strings.Builder
 
-	// Build color encoding for the image ID (matching ratatui-image implementation)
-	colorCode := imageID & 0xFFFFFF
-	red := (colorCode >> 16) & 0xFF
-	green := (colorCode >> 8) & 0xFF
-	blue := colorCode & 0xFF
-
-	// Save current cursor position
-	builder.WriteString("\x1b[s")
+	// Build color encoding for the image ID
+	// For IDs <= 255, use 256-color mode for better compatibility
+	// For larger IDs, use 24-bit RGB encoding
+	var colorStart string
+	if imageID <= 255 {
+		colorStart = fmt.Sprintf("\x1b[38;5;%dm", imageID)
+	} else {
+		// Encode ID in RGB: R = id & 0xFF, G = (id >> 8) & 0xFF, B = (id >> 16) & 0xFF
+		r := imageID & 0xFF
+		g := (imageID >> 8) & 0xFF
+		b := (imageID >> 16) & 0xFF
+		colorStart = fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+	}
 
 	// Set foreground color to encode image ID
-	builder.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue))
+	builder.WriteString(colorStart)
 
-	// Render each row with proper positioning
+	// Render each row
 	for rowIdx, row := range area {
 		for _, placeholder := range row {
-			// Write the placeholder at this position
-			// The diacritics in the placeholder itself encode the row and column
 			builder.WriteString(placeholder)
 		}
-		// After each row, move to the beginning of the next line
+		// After each row (except last), reset color, newline, then restore color
+		// This ensures proper color handling across line boundaries
 		if rowIdx < len(area)-1 {
-			builder.WriteString("\n") // Newline moves to the next line, column 0
+			builder.WriteString("\x1b[39m\n")
+			builder.WriteString(colorStart)
 		}
 	}
 
-	// Reset color and restore cursor position
+	// Reset foreground color at the end
 	builder.WriteString("\x1b[39m")
-	builder.WriteString("\x1b[u")
 
 	return builder.String()
 }
