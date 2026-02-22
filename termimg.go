@@ -37,6 +37,7 @@ type Image struct {
 	png          bool
 	tempFile     bool
 	imageNum     int
+	useUnicode   bool // Use Unicode placeholders for Kitty (enables scrolling)
 
 	// Cached renderer
 	renderer Renderer
@@ -292,6 +293,16 @@ func (i *Image) ImageNum(num int) *Image {
 	return i
 }
 
+// UseUnicode enables Unicode placeholders for Kitty protocol.
+// This allows images to scroll with text content. Automatically enables Virtual mode.
+func (i *Image) UseUnicode(u bool) *Image {
+	i.useUnicode = u
+	if u {
+		i.virtual = true // Unicode placeholders require virtual mode
+	}
+	return i
+}
+
 // Render generates the escape sequence string for the image
 func (i *Image) Render() (string, error) {
 	img, err := i.loadImage()
@@ -329,8 +340,9 @@ func (i *Image) Print() error {
 func ClearAll() error {
 	// This command is specific to the Kitty renderer, but it's safe to send
 	// as other terminals will ignore it.
-	control := "a=d"
-	output := fmt.Sprintf("\x1b_G%s\x1b", control)
+	// d=A means delete all images and all placements (uppercase A is important)
+	control := "a=d,d=A"
+	output := fmt.Sprintf("\x1b_G%s\x1b\\", control)
 	if inTmux() {
 		output = wrapTmuxPassthrough(output)
 	}
@@ -342,8 +354,9 @@ func ClearAll() error {
 func ClearAllString() string {
 	// This command is specific to the Kitty renderer, but it's safe to send
 	// as other terminals will ignore it.
-	control := "a=d"
-	output := fmt.Sprintf("\x1b_G%s\x1b", control)
+	// d=A means delete all images and all placements (uppercase A is important)
+	control := "a=d,d=A"
+	output := fmt.Sprintf("\x1b_G%s\x1b\\", control)
 	if inTmux() {
 		output = wrapTmuxPassthrough(output)
 	}
@@ -450,6 +463,7 @@ func (i *Image) buildRenderOptions() RenderOptions {
 			PNG:         i.png,
 			TempFile:    i.tempFile,
 			ImageNum:    i.imageNum,
+			UseUnicode:  i.useUnicode,
 		}
 	}
 
