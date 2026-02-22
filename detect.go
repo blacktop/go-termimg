@@ -345,9 +345,7 @@ func ParallelProtocolDetection() (kitty, sixel, iterm2 bool) {
 
 	// Kitty detection
 	if !results.kitty {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			query := "\x1b_Gi=42,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
 			if resp, err := querier.Query(query, QueryTimeout); err == nil {
 				mu.Lock()
@@ -358,13 +356,11 @@ func ParallelProtocolDetection() (kitty, sixel, iterm2 bool) {
 			} else {
 				logDetection("kitty", false, err, false)
 			}
-		}()
+		})
 	}
 
 	// Sixel detection
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		query := "\x1b[?1;1;0S" // XTSMGRAPHICS query
 		if resp, err := querier.Query(query, QueryTimeout); err == nil {
 			mu.Lock()
@@ -375,13 +371,11 @@ func ParallelProtocolDetection() (kitty, sixel, iterm2 bool) {
 		} else {
 			logDetection("sixel", false, err, false)
 		}
-	}()
+	})
 
 	// iTerm2 detection
 	if !results.iterm2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			query := "\x1b]1337;ReportCellSize\x07"
 			if resp, err := querier.Query(query, QueryTimeout); err == nil {
 				mu.Lock()
@@ -392,7 +386,7 @@ func ParallelProtocolDetection() (kitty, sixel, iterm2 bool) {
 			} else {
 				logDetection("iterm2", false, err, false)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

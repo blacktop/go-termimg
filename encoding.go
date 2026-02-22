@@ -72,15 +72,13 @@ func ParallelBase64Encode(data []byte, chunkSize int) []string {
 
 	// Start workers
 	for range numWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for chunkIdx := range jobs {
 				start := chunkIdx * chunkSize
 				end := min(start+chunkSize, len(data))
 				results[chunkIdx] = Base64Encode(data[start:end])
 			}
-		}()
+		})
 	}
 
 	// Send jobs

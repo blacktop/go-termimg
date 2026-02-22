@@ -106,6 +106,25 @@ func (r *KittyRenderer) GetLastImageID() uint32 {
 	return r.lastID
 }
 
+func reserveUnicodeImageNum(opts *KittyOptions) (uint32, error) {
+	const maxUnicodeImageNum = 0xFFFFFF
+
+	if opts != nil && opts.ImageNum > 0 {
+		if opts.ImageNum > maxUnicodeImageNum {
+			return 0, fmt.Errorf("unicode placeholders require image number <= 0xFFFFFF")
+		}
+		return uint32(opts.ImageNum), nil
+	}
+
+	imageNum := atomic.AddUint32(&globalKittyImageNum, 1)
+	if imageNum > maxUnicodeImageNum {
+		atomic.StoreUint32(&globalKittyImageNum, 1)
+		imageNum = 1
+	}
+
+	return imageNum, nil
+}
+
 // Render generates the escape sequence for displaying the image
 func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, error) {
 	// Process the image (resize, dither, etc.)
@@ -121,7 +140,6 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	// Generate unique image ID using atomic counter to ensure uniqueness across all instances
 	imageID := atomic.AddUint32(&globalKittyImageID, 1)
-	r.lastID = imageID
 
 	// Get image bounds
 	bounds := processed.Bounds()
@@ -147,8 +165,10 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		rows = opts.Height
 	}
 
+	kittyOpts := opts.KittyOpts
+
 	// Check if using Unicode placeholders - this requires a different two-step approach
-	useUnicode := opts.KittyOpts != nil && opts.KittyOpts.UseUnicode
+	useUnicode := kittyOpts != nil && kittyOpts.UseUnicode
 
 	if useUnicode {
 		// Two-step process for Unicode placeholders (matches old termimg behavior):
@@ -156,13 +176,10 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		// 2. Create placement with U=1 and explicit cols/rows
 		// 3. Generate placeholder characters
 
-		// Use a small image ID that fits in 24 bits for RGB foreground color encoding
-		imageNum := atomic.AddUint32(&globalKittyImageNum, 1)
-		if imageNum > 0xFFFFFF {
-			atomic.StoreUint32(&globalKittyImageNum, 1)
-			imageNum = 1
+		imageNum, err := reserveUnicodeImageNum(kittyOpts)
+		if err != nil {
+			return "", err
 		}
-		r.lastNum = imageNum
 
 		// Encode as PNG for transmission
 		var buf bytes.Buffer
@@ -212,13 +229,16 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		placeholders := r.generateUnicodePlaceholders(imageNum, cols, rows)
 		output.WriteString(placeholders)
 
+		r.lastNum = imageNum
+		r.lastID = imageNum
+
 		return output.String(), nil
 	}
 
 	// Standard (non-Unicode) rendering path
 	var data []byte
 	var format string
-	if opts.KittyOpts != nil && opts.KittyOpts.PNG {
+	if kittyOpts != nil && kittyOpts.PNG {
 		format = "f=100"
 		var b bytes.Buffer
 		if err := png.Encode(&b, processed); err != nil {
@@ -234,7 +254,7 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	// Check for compression
 	var compressed bool
-	if opts.KittyOpts != nil && opts.KittyOpts.Compression {
+	if kittyOpts != nil && kittyOpts.Compression {
 		compressed = true
 		var b bytes.Buffer
 		w, err := zlib.NewWriterLevel(&b, zlib.BestSpeed)
@@ -268,13 +288,13 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	// Build control data
 	var control string
 	var transferType string
-	if opts.KittyOpts != nil && opts.KittyOpts.TempFile {
+	if kittyOpts != nil && kittyOpts.TempFile {
 		transferType = ",t=t"
 	}
 
 	imageIDStr := fmt.Sprintf("i=%d", imageID)
-	if opts.KittyOpts != nil && opts.KittyOpts.ImageNum > 0 {
-		imageIDStr = fmt.Sprintf("I=%d", opts.KittyOpts.ImageNum)
+	if kittyOpts != nil && kittyOpts.ImageNum > 0 {
+		imageIDStr = fmt.Sprintf("I=%d", kittyOpts.ImageNum)
 	}
 
 	if opts.Virtual {
@@ -327,33 +347,36 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 	}
 
 	// Handle non-unicode Kitty options
-	if opts.KittyOpts != nil {
-		if opts.Virtual && !opts.KittyOpts.UseUnicode {
+	if kittyOpts != nil {
+		if opts.Virtual && !kittyOpts.UseUnicode {
 			// Non-unicode virtual placement - just generate simple placeholders
 			placeholders := r.generateUnicodePlaceholders(imageID, cols, rows)
 			output.WriteString(placeholders)
 		}
 
 		// Handle animation after image transfer
-		if opts.KittyOpts.Animation != nil && len(opts.KittyOpts.Animation.ImageIDs) > 0 {
+		if kittyOpts.Animation != nil && len(kittyOpts.Animation.ImageIDs) > 0 {
 			// TODO: Animation is handled separately after all images are transferred
 			// This is just to validate the option structure
 		}
 
 		// Handle positioning after image transfer
-		if opts.KittyOpts.Position != nil {
+		if kittyOpts.Position != nil {
 			// TODO: Positioning is handled separately via PlaceImage method
 			// This is just to validate the option structure
 		}
 	}
 
+	r.lastID = imageID
 	return output.String(), nil
 }
 
 // Print outputs the image directly to stdout
 func (r *KittyRenderer) Print(img image.Image, opts RenderOptions) error {
+	kittyOpts := opts.KittyOpts
+
 	// Check if we should use file transfer optimization
-	if opts.KittyOpts != nil && opts.KittyOpts.FileTransfer {
+	if kittyOpts != nil && kittyOpts.FileTransfer {
 		// TODO: File transfer would require knowing the source file path
 		// This is best handled at a higher level in the Image API
 		// For now, fall back to regular rendering
@@ -366,18 +389,18 @@ func (r *KittyRenderer) Print(img image.Image, opts RenderOptions) error {
 	_, err = io.WriteString(os.Stdout, output)
 
 	// Handle post-render operations
-	if err == nil && opts.KittyOpts != nil {
+	if err == nil && kittyOpts != nil {
 		// Handle positioning if specified
-		if opts.KittyOpts.Position != nil {
+		if kittyOpts.Position != nil {
 			imageID := fmt.Sprintf("%d", r.lastID)
-			err = r.PlaceImage(imageID, opts.KittyOpts.Position.X,
-				opts.KittyOpts.Position.Y, opts.KittyOpts.Position.ZIndex)
+			err = r.PlaceImage(imageID, kittyOpts.Position.X,
+				kittyOpts.Position.Y, kittyOpts.Position.ZIndex)
 		}
 
 		// Handle animation if specified
-		if opts.KittyOpts.Animation != nil && len(opts.KittyOpts.Animation.ImageIDs) > 0 {
-			err = r.AnimateImages(opts.KittyOpts.Animation.ImageIDs,
-				opts.KittyOpts.Animation.DelayMs, opts.KittyOpts.Animation.Loops)
+		if kittyOpts.Animation != nil && len(kittyOpts.Animation.ImageIDs) > 0 {
+			err = r.AnimateImages(kittyOpts.Animation.ImageIDs,
+				kittyOpts.Animation.DelayMs, kittyOpts.Animation.Loops)
 		}
 	}
 
