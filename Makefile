@@ -7,7 +7,7 @@ bump:
 .PHONY: build
 build:
 	@echo "🚀 Building Version $(shell svu current)"
-	go build -o imgcat ./cmd/imgcat/main.go
+	cd cmd/imgcat && go build -o ../../imgcat .
 
 .PHONY: test
 test:
