@@ -26,8 +26,8 @@ func TestKittyZlibCompression(t *testing.T) {
 	t.Log(output)
 
 	// Handle tmux wrapping if present
-	if strings.HasPrefix(output, "\x1bPtmux;\x1b") {
-		unwrapped := strings.TrimPrefix(output, "\x1bPtmux;\x1b")
+	if after, ok := strings.CutPrefix(output, "\x1bPtmux;\x1b"); ok {
+		unwrapped := after
 		unwrapped = strings.TrimSuffix(unwrapped, "\x1b\\")
 		output = strings.ReplaceAll(unwrapped, "\x1b\x1b", "\x1b")
 	}

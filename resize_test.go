@@ -14,8 +14,8 @@ import (
 func createTestImage(width, height int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	// Fill with a simple pattern for visual verification
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			img.Set(x, y, color.RGBA{
 				R: uint8((x * 255) / width),
 				G: uint8((y * 255) / height),
@@ -245,11 +245,11 @@ func TestResizeConcurrency(t *testing.T) {
 	results := make(chan image.Image, numGoroutines*numOperations)
 
 	// Launch multiple goroutines doing resize operations
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				size := uint(20 + (id+j)%30) // Vary sizes
 				result := ResizeImage(img, size, size, fmt.Sprintf("concurrent_%d_%d", id, j))
 				results <- result
@@ -331,8 +331,8 @@ func TestImageProcessingQuality(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 
 	// Create a checkerboard pattern
-	for y := 0; y < 4; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 4 {
+		for x := range 4 {
 			if (x+y)%2 == 0 {
 				img.Set(x, y, color.RGBA{255, 255, 255, 255}) // White
 			} else {
@@ -423,7 +423,7 @@ func TestMemoryUsage(t *testing.T) {
 	runtime.ReadMemStats(&m1)
 
 	// Create and resize many images
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		img := createTestImage(100, 100)
 		_ = ResizeImage(img, 50, 50, fmt.Sprintf("memory_test_%d", i))
 		if i%10 == 0 {

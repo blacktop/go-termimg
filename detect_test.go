@@ -2,6 +2,7 @@ package termimg
 
 import (
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -187,13 +188,7 @@ func TestDetermineProtocols(t *testing.T) {
 	assert.NotEmpty(t, protocols, "Should return at least one protocol")
 
 	// Should always include halfblocks as fallback
-	found := false
-	for _, p := range protocols {
-		if p == Halfblocks {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(protocols, Halfblocks)
 	assert.True(t, found, "Should include halfblocks as fallback")
 }
 
@@ -316,7 +311,7 @@ func TestConcurrentDetection(t *testing.T) {
 	// Test concurrent access to detection functions
 	done := make(chan bool, 10)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			_ = DetectProtocol()
 			_ = QueryTerminalFeatures()
@@ -325,7 +320,7 @@ func TestConcurrentDetection(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		select {
 		case <-done:
 			// Success

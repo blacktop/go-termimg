@@ -322,7 +322,7 @@ func (g *ImageGallery) Render() (string, error) {
 	// Calculate grid layout
 	rows := (len(g.images) + g.columns - 1) / g.columns
 
-	for row := 0; row < rows; row++ {
+	for row := range rows {
 		// Render each image in the row
 		var imageOutputs []string
 		maxLines := 0
@@ -385,7 +385,7 @@ func combineImagesHorizontally(images []string, spacing int, maxLines int) strin
 	spacingStr := strings.Repeat(" ", spacing)
 
 	// Combine line by line
-	for line := 0; line < maxLines; line++ {
+	for line := range maxLines {
 		for i, imageLines := range imageLinesSet {
 			if i > 0 {
 				result.WriteString(spacingStr)
