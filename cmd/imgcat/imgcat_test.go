@@ -23,7 +23,7 @@ func TestImgcatCLI(t *testing.T) {
 	// Build the binary
 	tmpDir := t.TempDir()
 	binary := filepath.Join(tmpDir, "imgcat")
-	
+
 	cmd := exec.Command("go", "build", "-o", binary, ".")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -46,15 +46,15 @@ func TestImgcatCLI(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "Show help",
-			args:    []string{"--help"},
-			wantErr: false,
+			name:     "Show help",
+			args:     []string{"--help"},
+			wantErr:  false,
 			contains: []string{"Usage:", "Flags:"},
 		},
 		{
-			name:    "Detect protocol",
-			args:    []string{"--detect"},
-			wantErr: false,
+			name:     "Detect protocol",
+			args:     []string{"--detect"},
+			wantErr:  false,
 			contains: []string{"Best protocol:"},
 		},
 		{
@@ -80,9 +80,9 @@ func TestImgcatCLI(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
-			
+
 			err := cmd.Run()
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -100,10 +100,10 @@ func TestImgcatCLI(t *testing.T) {
 func createTestPNG(t *testing.T, path string) {
 	// Create a simple 10x10 PNG using Go's image package
 	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
-	
+
 	// Fill with a simple pattern
-	for y := 0; y < 10; y++ {
-		for x := 0; x < 10; x++ {
+	for y := range 10 {
+		for x := range 10 {
 			img.Set(x, y, color.RGBA{
 				R: uint8((x * 255) / 10),
 				G: uint8((y * 255) / 10),

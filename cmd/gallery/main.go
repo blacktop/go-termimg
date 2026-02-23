@@ -23,7 +23,7 @@ type fileItem struct {
 
 func (f fileItem) FilterValue() string { return f.name }
 func (f fileItem) Title() string       { return f.name }
-func (f fileItem) Description() string { 
+func (f fileItem) Description() string {
 	if f.info.IsDir() {
 		return "Directory"
 	}
@@ -134,7 +134,7 @@ func initialModel() model {
 	l.SetShowPagination(false)
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(false)
-	
+
 	// Customize the list delegate for our styling
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = selectedItemStyle
@@ -198,7 +198,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		availableHeight := msg.Height - 6
 		m.viewport.Width = (msg.Width / 2) - 4
 		m.viewport.Height = availableHeight
-		
+
 		// Update list size for the left panel
 		leftPanelWidth := (msg.Width / 2) - 4
 		m.list.SetWidth(leftPanelWidth)
@@ -295,7 +295,7 @@ func (m model) View() string {
 		// For non-images, errors, or loading states, use the viewport
 		rightPanelContent = m.viewport.View()
 	}
-	
+
 	rightPanel := panelBorderStyle.
 		Width(rightPanelWidth).
 		Height(panelHeight).
@@ -308,7 +308,7 @@ func (m model) View() string {
 	// Append the image rendering commands AFTER the text UI has been built
 	b.WriteString(m.viewImage())
 
-	// Navigation legend  
+	// Navigation legend
 	legend := []string{
 		legendKeyStyle.Render("↑/k") + " up",
 		legendKeyStyle.Render("↓/j") + " down",

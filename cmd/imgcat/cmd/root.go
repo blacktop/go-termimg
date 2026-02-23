@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/apex/log"
@@ -48,9 +50,11 @@ var (
 
 	// Enhanced positioning options
 	showUnicode bool
+	unicodeDemo bool
 	xPosition   int
 	yPosition   int
 	placeImage  bool
+	placeClear  bool
 	imageID     string
 	testGrid    bool
 )
@@ -76,11 +80,13 @@ func init() {
 	rootCmd.PersistentFlags().Int("image-num", 0, "Set image number (Kitty only)")
 
 	// Enhanced positioning flags
-	rootCmd.PersistentFlags().BoolVar(&showUnicode, "unicode", false, "Show Unicode placeholders instead of transmitting image (Kitty only)")
+	rootCmd.PersistentFlags().BoolVar(&showUnicode, "unicode", false, "Render image with Kitty Unicode placeholders (scroll-safe)")
+	rootCmd.PersistentFlags().BoolVar(&unicodeDemo, "unicode-demo", false, "Show Unicode placeholders only (diagnostic; no image transmission)")
 	rootCmd.PersistentFlags().IntVarP(&xPosition, "x", "x", 0, "X position in character cells (for placement mode)")
 	rootCmd.PersistentFlags().IntVarP(&yPosition, "y", "y", 0, "Y position in character cells (for placement mode)")
 	rootCmd.PersistentFlags().BoolVar(&placeImage, "place", false, "Use placement mode (transmit first, then place)")
-	rootCmd.PersistentFlags().StringVar(&imageID, "id", "", "Image ID for placement mode")
+	rootCmd.PersistentFlags().BoolVar(&placeClear, "place-clear", false, "Clear screen before placement mode output")
+	rootCmd.PersistentFlags().StringVar(&imageID, "id", "", "Numeric image ID for placement mode")
 	rootCmd.PersistentFlags().BoolVar(&testGrid, "test-grid", false, "Display a test grid showing Unicode positioning")
 }
 
@@ -101,6 +107,11 @@ var rootCmd = &cobra.Command{
 
 		if testGrid {
 			showTestGrid()
+			return nil
+		}
+
+		if unicodeDemo {
+			showUnicodePlaceholders()
 			return nil
 		}
 
@@ -178,6 +189,11 @@ var rootCmd = &cobra.Command{
 			img = img.ImageNum(imageNum)
 		}
 
+		if showUnicode {
+			// Real Unicode mode: transmit + virtual placement + placeholders.
+			img = img.Protocol(termimg.Kitty).UseUnicode(true)
+		}
+
 		if tmuxMode {
 			termimg.ForceTmux(true)
 		}
@@ -190,11 +206,6 @@ var rootCmd = &cobra.Command{
 					log.Errorf("error clearing image: %v", clearErr)
 				}
 			}()
-		}
-
-		// Handle special modes
-		if showUnicode {
-			return showUnicodePlaceholders(img)
 		}
 
 		if placeImage {
@@ -284,8 +295,8 @@ func showTestGrid() {
 
 	// Show individual placeholders with their coordinates
 	fmt.Println("\nIndividual Placeholders:")
-	for row := uint16(0); row < 3; row++ {
-		for col := uint16(0); col < 3; col++ {
+	for row := range uint16(3) {
+		for col := range uint16(3) {
 			placeholder := termimg.CreatePlaceholder(row, col, byte(imageID>>24))
 			fmt.Printf("(%d,%d): %s  ", row, col, placeholder)
 		}
@@ -293,14 +304,12 @@ func showTestGrid() {
 	}
 }
 
-// showUnicodePlaceholders generates and displays Unicode placeholders for virtual images
-func showUnicodePlaceholders(img *termimg.Image) error {
+// showUnicodePlaceholders generates and displays Unicode placeholders for virtual images.
+// This is a diagnostics/demo mode and does not transmit image data.
+func showUnicodePlaceholders() {
 	fmt.Println("🔤 Unicode Placeholders Mode")
 	fmt.Println("===========================")
 	fmt.Println()
-
-	// Force virtual mode and Kitty protocol
-	img = img.Virtual(true).Protocol(termimg.Kitty)
 
 	// For demo purposes, let's create a 10x5 placeholder grid
 	imageID := uint32(123)
@@ -318,41 +327,66 @@ func showUnicodePlaceholders(img *termimg.Image) error {
 	fmt.Println("a virtual image. In a real scenario, you would:")
 	fmt.Println("1. Transmit the image with U=1 (virtual placement)")
 	fmt.Println("2. Display these Unicode placeholders to position the image")
-
-	return nil
 }
 
 // placeImageAtPosition handles placement mode
 func placeImageAtPosition(img *termimg.Image) error {
-	fmt.Println("📍 Image Placement Mode")
-	fmt.Println("=======================")
-	fmt.Println()
+	if err := validatePlacementCoordinates(xPosition, yPosition); err != nil {
+		return err
+	}
+
+	requestedImageID, hasRequestedImageID, err := parsePlacementImageID(imageID)
+	if err != nil {
+		return err
+	}
+
+	// Optional clear for cleaner placement verification captures.
+	if placeClear {
+		if _, err := fmt.Fprint(os.Stdout, "\x1b[2J\x1b[H"); err != nil {
+			return fmt.Errorf("failed to clear terminal: %w", err)
+		}
+	}
 
 	// Force Kitty protocol for placement
 	img = img.Protocol(termimg.Kitty)
 
-	if imageID == "" {
-		// Generate a unique ID if not provided
-		imageID = fmt.Sprintf("imgcat_%d", time.Now().Unix())
+	// For placement mode, --id is the source of truth when provided.
+	if hasRequestedImageID {
+		img = img.ImageNum(int(requestedImageID))
 	}
 
-	fmt.Printf("Using image ID: %s\n", imageID)
-	fmt.Printf("Position: (%d, %d)\n", xPosition, yPosition)
-	if zIndex > 0 {
-		fmt.Printf("Z-index: %d\n", zIndex)
+	if verbose {
+		if hasRequestedImageID {
+			fmt.Fprintf(os.Stderr, "Using requested image ID: %d\n", requestedImageID)
+		} else {
+			fmt.Fprintln(os.Stderr, "Using auto-assigned image ID")
+		}
+		fmt.Fprintf(os.Stderr, "Position: (%d, %d)\n", xPosition, yPosition)
+		if zIndex > 0 {
+			fmt.Fprintf(os.Stderr, "Z-index: %d\n", zIndex)
+		}
 	}
-	fmt.Println()
 
 	// First, transmit the image with virtual placement
 	img = img.Virtual(true).ZIndex(zIndex)
 
-	fmt.Println("Step 1: Transmitting image with virtual placement...")
-	if err := img.Print(); err != nil {
+	if verbose {
+		fmt.Fprintln(os.Stderr, "Step 1: Transmitting image with virtual placement...")
+	}
+	rendered, err := img.Render()
+	if err != nil {
 		return fmt.Errorf("failed to transmit image: %w", err)
+	}
+	// Placement mode should only transmit in step 1; defer placeholder rendering to step 2.
+	rendered = stripUnicodePlaceholderPayload(rendered)
+	if _, err := fmt.Fprint(os.Stdout, rendered); err != nil {
+		return fmt.Errorf("failed to write transfer sequence: %w", err)
 	}
 
 	// Now place the image at the specified position
-	fmt.Println("Step 2: Placing image at specified position...")
+	if verbose {
+		fmt.Fprintln(os.Stderr, "Step 2: Placing image at specified position...")
+	}
 
 	// Get the renderer that was used for this image
 	renderer, err := img.GetRenderer()
@@ -367,7 +401,11 @@ func placeImageAtPosition(img *termimg.Image) error {
 
 	// Get the actual numeric image ID that was assigned during rendering
 	actualImageID := kittyRenderer.GetLastImageID()
-	actualImageIDStr := fmt.Sprintf("%d", actualImageID)
+	placementImageID := actualImageID
+	if hasRequestedImageID {
+		placementImageID = requestedImageID
+	}
+	actualImageIDStr := fmt.Sprintf("%d", placementImageID)
 
 	// Calculate dimensions in character cells for placement
 	var widthCells, heightCells int
@@ -410,15 +448,60 @@ func placeImageAtPosition(img *termimg.Image) error {
 		heightCells = 1
 	}
 
-	fmt.Printf("Image will be placed at position (%d, %d) with size %dx%d cells\n",
-		xPosition, yPosition, widthCells, heightCells)
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Image will be placed at position (%d, %d) with size %dx%d cells\n",
+			xPosition, yPosition, widthCells, heightCells)
+	}
 
 	if err := kittyRenderer.PlaceImageWithSize(actualImageIDStr, xPosition, yPosition, zIndex, widthCells, heightCells); err != nil {
 		return fmt.Errorf("failed to place image: %w", err)
 	}
 
+	// Move cursor below the placed image before printing status to avoid overlap.
+	statusRow := max(yPosition+heightCells+2, 1)
+	if _, err := fmt.Fprintf(os.Stdout, "\x1b[%d;1H", statusRow); err != nil {
+		return fmt.Errorf("failed to position status cursor: %w", err)
+	}
+
 	fmt.Println("✅ Image transmitted and placed successfully!")
 	return nil
+}
+
+func validatePlacementCoordinates(x, y int) error {
+	if x < 0 || y < 0 {
+		return fmt.Errorf("--x and --y must be >= 0")
+	}
+	return nil
+}
+
+func parsePlacementImageID(raw string) (uint32, bool, error) {
+	if raw == "" {
+		return 0, false, nil
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil || parsed == 0 {
+		return 0, false, fmt.Errorf("invalid --id %q: must be a positive integer", raw)
+	}
+	return uint32(parsed), true, nil
+}
+
+func stripUnicodePlaceholderPayload(rendered string) string {
+	idx := strings.Index(rendered, termimg.PLACEHOLDER_CHAR)
+	if idx < 0 {
+		return rendered
+	}
+
+	// Placeholders are prefixed with an SGR color escape that starts after the
+	// final Kitty transfer sequence terminator.
+	prefix := rendered[:idx]
+	lastKittyTerm := strings.LastIndex(prefix, "\x1b\\")
+	if colorIdx := strings.LastIndex(prefix, "\x1b[38;2;"); colorIdx > lastKittyTerm {
+		return prefix[:colorIdx]
+	}
+	if colorIdx := strings.LastIndex(prefix, "\x1b[38;5;"); colorIdx > lastKittyTerm {
+		return prefix[:colorIdx]
+	}
+	return prefix
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
