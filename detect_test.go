@@ -163,6 +163,29 @@ func TestParallelProtocolDetection(t *testing.T) {
 	// (but this might fail in CI environments, so just check types)
 }
 
+func TestParallelProtocolDetectionPreservesSixelWhenKittyDetectedFromEnv(t *testing.T) {
+	wasTmuxForced := IsTmuxForced()
+	defer ForceTmux(wasTmuxForced)
+	ForceTmux(false)
+
+	// Normalize all relevant env hints so this assertion is deterministic.
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("TERM_PROGRAM", "WezTerm")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("XTERM_VERSION", "")
+	t.Setenv("TMUX", "")
+	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
+	t.Setenv("WEZTERM_EXECUTABLE", "")
+	t.Setenv("ITERM_SESSION_ID", "")
+	t.Setenv("LC_TERMINAL", "")
+	t.Setenv("TERM_SESSION_ID", "")
+
+	kitty, sixel, iterm2 := ParallelProtocolDetection()
+	assert.True(t, kitty, "WezTerm should be detected as kitty-capable from env hints")
+	assert.True(t, sixel, "Sixel env detection should still run before early return")
+	assert.False(t, iterm2, "WezTerm env detection path should not force iTerm2 support")
+}
+
 func TestProtocolStrings(t *testing.T) {
 	tests := []struct {
 		protocol Protocol

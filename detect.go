@@ -312,6 +312,9 @@ func ParallelProtocolDetection() (kitty, sixel, iterm2 bool) {
 		results.kitty = true
 	}
 
+	// Populate Sixel from environment before early-returning for Kitty/iTerm hints.
+	results.sixel = DetectSixelFromEnvironment()
+
 	// If we've already detected a graphics protocol from environment variables,
 	// skip all terminal queries to avoid leaving garbage in the input buffer.
 	// This prevents issues with TUI frameworks like bubbletea that read from stdin.

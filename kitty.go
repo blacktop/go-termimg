@@ -84,8 +84,9 @@ type KittyOptions struct {
 // Initialized with process ID + timestamp to prevent conflicts between program runs
 var globalKittyImageID = uint32(os.Getpid()<<16) + uint32(time.Now().UnixMicro()&0xFFFF)
 
-// Global image number counter for Unicode placeholders - must fit in 24 bits for RGB encoding
-// Starts at 1 to avoid 0 (which would be invisible in some color modes)
+// Global image number counter for Unicode placeholders.
+// IDs are 32-bit and encoded as: high byte via optional id_extra diacritic, low 24 bits via RGB.
+// Starts at 1 to avoid 0 (which can be ambiguous in some color mappings).
 var globalKittyImageNum uint32 = 1
 
 // KittyRenderer implements the Renderer interface for Kitty graphics protocol
@@ -355,12 +356,6 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	// Handle non-unicode Kitty options
 	if kittyOpts != nil {
-		if opts.Virtual && !kittyOpts.UseUnicode {
-			// Non-unicode virtual placement - just generate simple placeholders
-			placeholders := r.generateUnicodePlaceholders(imageID, cols, rows)
-			output.WriteString(placeholders)
-		}
-
 		// Handle animation after image transfer
 		if kittyOpts.Animation != nil && len(kittyOpts.Animation.ImageIDs) > 0 {
 			// TODO: Animation is handled separately after all images are transferred
@@ -497,11 +492,6 @@ func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zInde
 	// specific newline behavior from shifting rows back to column 1.
 	output.WriteString(renderAnchoredPlaceholderArea(imgID, xCells, yCells, widthCells, heightCells))
 
-	if inTmux() {
-		result := wrapTmuxPassthrough(output.String())
-		_, err := io.WriteString(os.Stdout, result)
-		return err
-	}
 	_, err := io.WriteString(os.Stdout, output.String())
 	return err
 }
@@ -514,20 +504,14 @@ func renderAnchoredPlaceholderArea(imageID uint32, xCells, yCells, widthCells, h
 		return ""
 	}
 
-	area := CreatePlaceholderArea(imageID, uint16(heightCells), uint16(widthCells))
-
-	r := (imageID >> 16) & 0xFF
-	g := (imageID >> 8) & 0xFF
-	b := imageID & 0xFF
-	colorStart := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+	idExtra := byte(imageID >> 24)
+	colorStart := placeholderColorStart(imageID)
 
 	var builder strings.Builder
-	for rowIdx, row := range area {
+	for rowIdx := range heightCells {
 		builder.WriteString(fmt.Sprintf("\x1b[%d;%dH", yCells+rowIdx+1, xCells+1))
 		builder.WriteString(colorStart)
-		for _, placeholder := range row {
-			builder.WriteString(placeholder)
-		}
+		writeInheritedPlaceholderRow(&builder, CreatePlaceholder(uint16(rowIdx), 0, idExtra), widthCells)
 		builder.WriteString("\x1b[39m")
 	}
 	return builder.String()
@@ -676,9 +660,9 @@ func diacritic(pos uint16) rune {
 	return kittyDiacritics[pos]
 }
 
-// CreatePlaceholder generates a Unicode placeholder for the given image position
-// placeholder_char + row_diacritic + column_diacritic + id_extra_diacritic
-func CreatePlaceholder(row, column uint16, id_extra byte) string {
+// CreatePlaceholder generates a Unicode placeholder for the given image position.
+// Kitty placeholder encoding uses row, column, and extra-id diacritics.
+func CreatePlaceholder(row, column uint16, idExtra byte) string {
 	var builder strings.Builder
 
 	// Add the placeholder character
@@ -687,24 +671,40 @@ func CreatePlaceholder(row, column uint16, id_extra byte) string {
 	// Add diacritical marks for row and column
 	builder.WriteRune(diacritic(row))
 	builder.WriteRune(diacritic(column))
-	// Add diacritic for the extra ID byte
-	builder.WriteRune(diacritic(uint16(id_extra)))
+	builder.WriteRune(diacritic(uint16(idExtra)))
 
 	return builder.String()
 }
 
 // CreatePlaceholderArea generates a grid of placeholders for an image
 func CreatePlaceholderArea(imageID uint32, rows, columns uint16) [][]string {
-	id_extra := byte(imageID >> 24)
+	idExtra := byte(imageID >> 24)
 	area := make([][]string, rows)
-	for r := range rows {
-		area[r] = make([]string, columns)
-		for c := range columns {
-			// Use 0-based indexing for row and column positions
-			area[r][c] = CreatePlaceholder(r, c, id_extra)
+	for row := range rows {
+		area[row] = make([]string, columns)
+		for column := range columns {
+			area[row][column] = CreatePlaceholder(row, column, idExtra)
 		}
 	}
 	return area
+}
+
+func placeholderColorStart(imageID uint32) string {
+	r := (imageID >> 16) & 0xFF
+	g := (imageID >> 8) & 0xFF
+	b := imageID & 0xFF
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+}
+
+func writeInheritedPlaceholderRow(builder *strings.Builder, firstPlaceholder string, width int) {
+	if width <= 0 {
+		return
+	}
+
+	builder.WriteString(firstPlaceholder)
+	for colIdx := 1; colIdx < width; colIdx++ {
+		builder.WriteString(PLACEHOLDER_CHAR)
+	}
 }
 
 // RenderPlaceholderAreaWithImageID converts a placeholder area to a string with proper positioning.
@@ -716,18 +716,17 @@ func RenderPlaceholderAreaWithImageID(area [][]string, imageID uint32) string {
 
 	// Encode ID in truecolor RGB: (R<<16 | G<<8 | B) == imageID&0xFFFFFF.
 	// Using 38;2 avoids palette-index ambiguity from 38;5 in terminals.
-	r := (imageID >> 16) & 0xFF
-	g := (imageID >> 8) & 0xFF
-	b := imageID & 0xFF
-	colorStart := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+	colorStart := placeholderColorStart(imageID)
 
 	// Set foreground color to encode image ID
 	builder.WriteString(colorStart)
 
 	// Render each row
 	for rowIdx, row := range area {
-		for _, placeholder := range row {
-			builder.WriteString(placeholder)
+		if len(row) > 0 {
+			// Use inherited row/column/id diacritics after the first placeholder
+			// to match Kitty Unicode rendering behavior across terminals.
+			writeInheritedPlaceholderRow(&builder, row[0], len(row))
 		}
 		// After each row (except last), reset color, newline, then restore color
 		// This ensures proper color handling across line boundaries

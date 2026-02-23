@@ -202,48 +202,9 @@ func (w *ImageWidget) RenderVirtual() (string, error) {
 		return "", fmt.Errorf("no image ID available")
 	}
 
-	// Generate the Unicode placeholder placement directly
-	var output strings.Builder
-
-	// Build color encoding for the image ID
-	colorCode := w.imageID & 0xFFFFFF
-	red := (colorCode >> 16) & 0xFF
-	green := (colorCode >> 8) & 0xFF
-	blue := colorCode & 0xFF
-	idExtra := byte(w.imageID >> 24)
-
-	// Save cursor position
-	output.WriteString("\x1b[s")
-
-	// Move to the target position
-	if w.x > 0 || w.y > 0 {
-		output.WriteString(fmt.Sprintf("\x1b[%d;%dH", w.y+1, w.x+1))
-	}
-
-	// Set foreground color to encode image ID
-	output.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue))
-
-	// Create the Unicode placeholders
-	for row := 0; row < w.height; row++ {
-		if row > 0 {
-			// Move to start of next row
-			output.WriteString(fmt.Sprintf("\x1b[%d;%dH", w.y+1+row, w.x+1))
-		}
-
-		// First placeholder in row has full encoding
-		placeholder := CreatePlaceholder(uint16(row), 0, idExtra)
-		output.WriteString(placeholder)
-
-		// Rest of the row uses just the base character
-		for col := 1; col < w.width; col++ {
-			output.WriteString(PLACEHOLDER_CHAR)
-		}
-	}
-
-	// Reset color and restore cursor
-	output.WriteString("\x1b[39m\x1b[u")
-
-	return output.String(), nil
+	// Render placeholders as in-band content at explicit absolute positions.
+	// Do not save/restore cursor here: placeholders are content and should scroll.
+	return renderAnchoredPlaceholderArea(w.imageID, w.x, w.y, w.width, w.height), nil
 }
 
 // PlaceAt places a virtual image at the specified position

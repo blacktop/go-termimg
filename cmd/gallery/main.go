@@ -355,7 +355,8 @@ func (m *model) renderImageForTUI(filename string) (string, int) {
 
 	// Apply virtual mode if enabled
 	if m.virtualMode && termimg.KittySupported() {
-		img = img.Protocol(termimg.Kitty).Virtual(true)
+		// Virtual mode rendering in gallery relies on Unicode placeholders for in-band display.
+		img = img.Protocol(termimg.Kitty).UseUnicode(true)
 	}
 
 	// Render the image to get the escape codes
