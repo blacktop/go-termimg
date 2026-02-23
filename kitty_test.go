@@ -170,6 +170,26 @@ func TestKittyUnicodeHonorsImageNumber(t *testing.T) {
 	assert.Equal(t, uint32(42), renderer.GetLastImageID(), "last image ID should match caller-provided Unicode image number")
 }
 
+func TestKittyUnicodeUsesPngTransferWithPlacementCommand(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	opts := RenderOptions{
+		KittyOpts: &KittyOptions{
+			UseUnicode: true,
+			ImageNum:   42,
+		},
+		features: &TerminalFeatures{
+			FontWidth:  8,
+			FontHeight: 16,
+		},
+	}
+
+	renderer := &KittyRenderer{}
+	output, err := renderer.Render(img, opts)
+	assert.NoError(t, err)
+	assert.Contains(t, output, "f=100,t=d,i=42", "Unicode path should transmit image data using PNG transfer")
+	assert.Contains(t, output, "a=p,U=1,i=42", "Unicode path should emit explicit virtual placement command")
+}
+
 func TestProcessImageUnicodeHonorsExplicitResize(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
 	opts := RenderOptions{
@@ -206,6 +226,10 @@ func TestProcessImageUnicodeScaleAutoWithSingleDimension(t *testing.T) {
 }
 
 func TestKittyUnicodeInvalidImageNumberDoesNotMutateLastID(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("requires 64-bit int to construct value > 0xFFFFFFFF")
+	}
+
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
 	renderer := &KittyRenderer{}
 
@@ -226,7 +250,7 @@ func TestKittyUnicodeInvalidImageNumberDoesNotMutateLastID(t *testing.T) {
 	invalidOpts := RenderOptions{
 		KittyOpts: &KittyOptions{
 			UseUnicode: true,
-			ImageNum:   0x1000000, // exceeds 24-bit limit
+			ImageNum:   int(uint64(^uint32(0)) + 1), // exceeds 32-bit limit
 		},
 		features: &TerminalFeatures{
 			FontWidth:  8,
@@ -236,4 +260,34 @@ func TestKittyUnicodeInvalidImageNumberDoesNotMutateLastID(t *testing.T) {
 	_, err = renderer.Render(img, invalidOpts)
 	assert.Error(t, err)
 	assert.Equal(t, uint32(42), renderer.GetLastImageID(), "failed render should not overwrite last successful image ID")
+}
+
+func TestRenderPlaceholderAreaWithImageIDUsesBigEndianRGB(t *testing.T) {
+	area := CreatePlaceholderArea(0x123456, 1, 1)
+	rendered := RenderPlaceholderAreaWithImageID(area, 0x123456)
+
+	assert.Contains(t, rendered, "\x1b[38;2;18;52;86m", "RGB encoding should match (R<<16 | G<<8 | B)")
+	assert.NotContains(t, rendered, "\x1b[38;2;86;52;18m", "little-endian RGB encoding should not be used")
+}
+
+func TestRenderPlaceholderAreaWithImageIDUsesTruecolorForLowIDs(t *testing.T) {
+	area := CreatePlaceholderArea(1, 1, 1)
+	rendered := RenderPlaceholderAreaWithImageID(area, 1)
+
+	assert.Contains(t, rendered, "\x1b[38;2;0;0;1m", "low IDs should still be encoded as truecolor bytes")
+	assert.NotContains(t, rendered, "\x1b[38;5;1m", "palette mode should not be used for ID encoding")
+}
+
+func TestRenderAnchoredPlaceholderAreaPositionsEveryRow(t *testing.T) {
+	rendered := renderAnchoredPlaceholderArea(1, 5, 5, 2, 3)
+	assert.Contains(t, rendered, "\x1b[6;6H")
+	assert.Contains(t, rendered, "\x1b[7;6H")
+	assert.Contains(t, rendered, "\x1b[8;6H")
+	assert.NotContains(t, rendered, "\n")
+	assert.Equal(t, 3, strings.Count(rendered, "\x1b[39m"))
+}
+
+func TestRenderAnchoredPlaceholderAreaEmptyWhenInvalidDimensions(t *testing.T) {
+	assert.Equal(t, "", renderAnchoredPlaceholderArea(1, 0, 0, 0, 3))
+	assert.Equal(t, "", renderAnchoredPlaceholderArea(1, 0, 0, 3, 0))
 }

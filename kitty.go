@@ -107,17 +107,17 @@ func (r *KittyRenderer) GetLastImageID() uint32 {
 }
 
 func reserveUnicodeImageNum(opts *KittyOptions) (uint32, error) {
-	const maxUnicodeImageNum = 0xFFFFFF
+	const maxUnicodeImageNum = uint64(^uint32(0))
 
 	if opts != nil && opts.ImageNum > 0 {
-		if opts.ImageNum > maxUnicodeImageNum {
-			return 0, fmt.Errorf("unicode placeholders require image number <= 0xFFFFFF")
+		if uint64(opts.ImageNum) > maxUnicodeImageNum {
+			return 0, fmt.Errorf("unicode placeholders require image number <= 0xFFFFFFFF")
 		}
 		return uint32(opts.ImageNum), nil
 	}
 
 	imageNum := atomic.AddUint32(&globalKittyImageNum, 1)
-	if imageNum > maxUnicodeImageNum {
+	if imageNum == 0 {
 		atomic.StoreUint32(&globalKittyImageNum, 1)
 		imageNum = 1
 	}
@@ -167,21 +167,17 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 	kittyOpts := opts.KittyOpts
 
-	// Check if using Unicode placeholders - this requires a different two-step approach
+	// Check if using Unicode placeholders - this uses a three-step flow:
+	// transmit image data, create virtual placement (U=1), then draw placeholders.
 	useUnicode := kittyOpts != nil && kittyOpts.UseUnicode
 
 	if useUnicode {
-		// Two-step process for Unicode placeholders (matches old termimg behavior):
-		// 1. Transmit image data (no display) using PNG format
-		// 2. Create placement with U=1 and explicit cols/rows
-		// 3. Generate placeholder characters
-
 		imageNum, err := reserveUnicodeImageNum(kittyOpts)
 		if err != nil {
 			return "", err
 		}
 
-		// Encode as PNG for transmission
+		// Encode as PNG for transfer.
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, processed); err != nil {
 			return "", fmt.Errorf("failed to encode png: %w", err)
@@ -189,8 +185,7 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 		data := buf.Bytes()
 		encoded := Base64Encode(data)
 
-		// Step 1: Transmit image data in chunks (no display)
-		// Format: f=100 (PNG), t=d (direct), i=<id>, q=2 (quiet)
+		// Step 1: Transmit image data in chunks (no immediate placement).
 		remaining := encoded
 		first := true
 		for len(remaining) > 0 {
@@ -217,15 +212,14 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 			output.WriteString(seq)
 		}
 
-		// Step 2: Create virtual placement with Unicode mode
-		// Format: a=p (placement), U=1 (unicode), i=<id>, c=<cols>, r=<rows>, q=2
+		// Step 2: Create virtual placement that placeholders will reference.
 		placementSeq := fmt.Sprintf("\x1b_Ga=p,U=1,i=%d,c=%d,r=%d,q=2\x1b\\", imageNum, cols, rows)
 		if inTmux() {
 			placementSeq = wrapTmuxPassthrough(placementSeq)
 		}
 		output.WriteString(placementSeq)
 
-		// Step 3: Generate placeholder characters
+		// Step 3: Generate placeholder characters.
 		placeholders := r.generateUnicodePlaceholders(imageNum, cols, rows)
 		output.WriteString(placeholders)
 
@@ -486,15 +480,9 @@ func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zInde
 
 	var output strings.Builder
 
-	// Move to the starting position (absolute)
-	// Terminal coordinates are 1-based
-	output.WriteString(fmt.Sprintf("\x1b[%d;%dH", yCells+1, xCells+1))
-
-	// Generate the placeholder area string
-	// RenderPlaceholderAreaWithImageID handles color encoding and does NOT save/restore cursor
-	area := CreatePlaceholderArea(imgID, uint16(heightCells), uint16(widthCells))
-	placeholders := RenderPlaceholderAreaWithImageID(area, imgID)
-	output.WriteString(placeholders)
+	// Render each row at an explicit absolute cursor position to avoid terminal-
+	// specific newline behavior from shifting rows back to column 1.
+	output.WriteString(renderAnchoredPlaceholderArea(imgID, xCells, yCells, widthCells, heightCells))
 
 	if inTmux() {
 		result := wrapTmuxPassthrough(output.String())
@@ -503,6 +491,33 @@ func (r *KittyRenderer) PlaceImageWithSize(imageID string, xCells, yCells, zInde
 	}
 	_, err := io.WriteString(os.Stdout, output.String())
 	return err
+}
+
+// renderAnchoredPlaceholderArea emits each placeholder row with an absolute
+// cursor address instead of newlines so row alignment is stable across
+// terminals with different LF/CR handling.
+func renderAnchoredPlaceholderArea(imageID uint32, xCells, yCells, widthCells, heightCells int) string {
+	if widthCells <= 0 || heightCells <= 0 {
+		return ""
+	}
+
+	area := CreatePlaceholderArea(imageID, uint16(heightCells), uint16(widthCells))
+
+	r := (imageID >> 16) & 0xFF
+	g := (imageID >> 8) & 0xFF
+	b := imageID & 0xFF
+	colorStart := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+
+	var builder strings.Builder
+	for rowIdx, row := range area {
+		builder.WriteString(fmt.Sprintf("\x1b[%d;%dH", yCells+rowIdx+1, xCells+1))
+		builder.WriteString(colorStart)
+		for _, placeholder := range row {
+			builder.WriteString(placeholder)
+		}
+		builder.WriteString("\x1b[39m")
+	}
+	return builder.String()
 }
 
 // SendFile optimizes transfer by sending file path instead of data when possible
@@ -686,19 +701,12 @@ func CreatePlaceholderArea(imageID uint32, rows, columns uint16) [][]string {
 func RenderPlaceholderAreaWithImageID(area [][]string, imageID uint32) string {
 	var builder strings.Builder
 
-	// Build color encoding for the image ID
-	// For IDs <= 255, use 256-color mode for better compatibility
-	// For larger IDs, use 24-bit RGB encoding
-	var colorStart string
-	if imageID <= 255 {
-		colorStart = fmt.Sprintf("\x1b[38;5;%dm", imageID)
-	} else {
-		// Encode ID in RGB: R = id & 0xFF, G = (id >> 8) & 0xFF, B = (id >> 16) & 0xFF
-		r := imageID & 0xFF
-		g := (imageID >> 8) & 0xFF
-		b := (imageID >> 16) & 0xFF
-		colorStart = fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
-	}
+	// Encode ID in truecolor RGB: (R<<16 | G<<8 | B) == imageID&0xFFFFFF.
+	// Using 38;2 avoids palette-index ambiguity from 38;5 in terminals.
+	r := (imageID >> 16) & 0xFF
+	g := (imageID >> 8) & 0xFF
+	b := imageID & 0xFF
+	colorStart := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
 
 	// Set foreground color to encode image ID
 	builder.WriteString(colorStart)
