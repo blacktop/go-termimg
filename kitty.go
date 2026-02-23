@@ -177,12 +177,20 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 			return "", err
 		}
 
-		// Encode as PNG for transfer.
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, processed); err != nil {
-			return "", fmt.Errorf("failed to encode png: %w", err)
+		var data []byte
+		unicodeFormat := DATA_RGBA_32_BIT
+		if kittyOpts != nil && kittyOpts.PNG {
+			unicodeFormat = DATA_PNG
+			var buf bytes.Buffer
+			if err := png.Encode(&buf, processed); err != nil {
+				return "", fmt.Errorf("failed to encode png: %w", err)
+			}
+			data = buf.Bytes()
+		} else {
+			rgbaImg := image.NewRGBA(bounds)
+			draw.Draw(rgbaImg, rgbaImg.Bounds(), processed, bounds.Min, draw.Src)
+			data = rgbaImg.Pix
 		}
-		data := buf.Bytes()
 		encoded := Base64Encode(data)
 
 		// Step 1: Transmit image data in chunks (no immediate placement).
@@ -201,7 +209,12 @@ func (r *KittyRenderer) Render(img image.Image, opts RenderOptions) (string, err
 
 			var seq string
 			if first {
-				seq = fmt.Sprintf("\x1b_Gf=100,t=d,i=%d,q=2,m=%d;%s\x1b\\", imageNum, more, chunk)
+				if unicodeFormat == DATA_RGBA_32_BIT {
+					seq = fmt.Sprintf("\x1b_Gf=32,s=%d,v=%d,t=d,i=%d,q=2,m=%d;%s\x1b\\",
+						pixelWidth, pixelHeight, imageNum, more, chunk)
+				} else {
+					seq = fmt.Sprintf("\x1b_Gf=100,t=d,i=%d,q=2,m=%d;%s\x1b\\", imageNum, more, chunk)
+				}
 				first = false
 			} else {
 				seq = fmt.Sprintf("\x1b_Gm=%d;%s\x1b\\", more, chunk)
