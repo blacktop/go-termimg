@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.15
 	github.com/charmbracelet/x/mosaic v0.0.0-20260216111343-536eb63c1f4c
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0
-	github.com/mattn/go-sixel v0.0.8
+	github.com/mattn/go-sixel v0.0.9
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/term v0.40.0
