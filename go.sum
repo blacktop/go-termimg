@@ -23,8 +23,8 @@ github.com/makeworld-the-better-one/dither/v2 v2.4.0 h1:Az/dYXiTcwcRSe59Hzw4RI1r
 github.com/makeworld-the-better-one/dither/v2 v2.4.0/go.mod h1:VBtN8DXO7SNtyGmLiGA7IsFeKrBkQPze1/iAeM95arc=
 github.com/mattn/go-runewidth v0.0.19 h1:v++JhqYnZuu5jSKrk9RbgF5v4CGUjqRfBm05byFGLdw=
 github.com/mattn/go-runewidth v0.0.19/go.mod h1:XBkDxAl56ILZc9knddidhrOlY5R/pDhgLpndooCuJAs=
-github.com/mattn/go-sixel v0.0.8 h1:H0bBGQVOJoSvzvtTgCInxvg1IZiNlTcIIIx8A6uvjpQ=
-github.com/mattn/go-sixel v0.0.8/go.mod h1:wbDSbrwpykVI1qEHyjZYsDgaJTwpVg9wSwmmh2slnBw=
+github.com/mattn/go-sixel v0.0.9 h1:ncx/rVU35Ut7/6gpVk4deC4/Wp2js9fDKmFmWnzmGoY=
+github.com/mattn/go-sixel v0.0.9/go.mod h1:mfichvavqIDFW14LGU24ux/UZ/wF0/hG+4pUWOWrQgM=
 github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 h1:zYyBkD/k9seD2A7fsi6Oo2LfFZAehjjQMERAvZLEDnQ=
 github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646/go.mod h1:jpp1/29i3P1S/RLdc7JQKbRpFeM1dOBd8T9ki5s+AY8=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
